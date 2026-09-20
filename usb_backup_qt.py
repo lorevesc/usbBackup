@@ -736,6 +736,14 @@ class Window(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(16)
 
+        self.avviso = label("", "hint")
+        self.avviso.setWordWrap(True)
+        self.avviso.setStyleSheet(f"color:{C['warn']}; background:#2a2417; "
+                                  "border:1px solid #4a3f24; border-radius:10px; "
+                                  "padding:11px 14px;")
+        self.avviso.setVisible(False)
+        lay.addWidget(self.avviso)
+
         vols = Card("Volumi collegati", "Seleziona una chiavetta per configurarla.")
         vols.head.addWidget(button("Aggiorna", "ghost", self.refresh_volumes))
         self.vol_grid = QGridLayout()
@@ -1071,6 +1079,8 @@ class Window(QMainWindow):
                              lambda: reveal(ub.dest_root_of(self.cfg))))
         bar.addWidget(button("Apri il log", "ghost", self.open_log))
         bar.addStretch(1)
+        bar.addWidget(button("Esporta sul disco", "ghost", self.export_settings))
+        bar.addWidget(button("Importa da file", "ghost", self.import_settings))
         card.body.addSpacing(20)
         card.body.addLayout(bar)
         lay.addWidget(card)
@@ -1267,6 +1277,25 @@ class Window(QMainWindow):
             self.vol_grid.setColumnStretch(col, 1)
         self.stick_card.setVisible(True)
         self.update_pc_dest()
+        self.check_stale()
+
+    def check_stale(self):
+        """Avvisa se un disco visto in passato non viene collegato da troppo."""
+        soglia = float(self.cfg.get("stale_days", 7))
+        if soglia <= 0:
+            self.avviso.setVisible(False)
+            return
+        collegati = {v["label"] for v in self.volumes}
+        fermi = [(nome, giorni) for nome, giorni in ub.giorni_da_ultimo_backup().items()
+                 if giorni >= soglia and nome not in collegati]
+        if not fermi:
+            self.avviso.setVisible(False)
+            return
+        fermi.sort(key=lambda x: -x[1])
+        pezzi = [f"{nome} da {int(giorni)} giorni" for nome, giorni in fermi[:3]]
+        self.avviso.setText("Non colleghi da un po': " + ", ".join(pezzi)
+                            + ".  Il backup di quei dischi e' fermo a quella data.")
+        self.avviso.setVisible(True)
 
     def select_volume(self, path: str):
         if self.volume and self.volume["path"] == path:
@@ -1563,6 +1592,56 @@ class Window(QMainWindow):
         self.refresh_volumes()
         self.load_pc_plan()
         self.load_cfg()
+
+    def export_settings(self):
+        """Mette impostazioni e piano sul disco selezionato, per l'altro PC."""
+        if not self.volume:
+            self.toast("Seleziona prima un disco nella scheda Chiavette", "err")
+            return
+        try:
+            dove = ub.export_settings(Path(self.volume["path"]), self.cfg)
+        except OSError as exc:
+            self.toast(f"Non riesco a scrivere: {exc}", "err")
+            return
+        self.toast(f"Esportato in {dove.name}", "ok")
+
+    def import_settings(self):
+        inizio = self.volume["path"] if self.volume else str(Path.home())
+        scelto, _ = QFileDialog.getOpenFileName(
+            self, "File di impostazioni da importare", inizio, "JSON (*.json)")
+        if not scelto:
+            return
+        try:
+            nuova, piano = ub.import_settings(Path(scelto), self.cfg)
+        except Exception as exc:
+            self.toast(f"File non valido: {exc}", "err")
+            return
+        risposta = QMessageBox.question(
+            self, "Importare?",
+            "Arrivano impostazioni e piano da un'altra macchina." + chr(10) * 2
+            + "Restano com'erano: cartella dei backup, file di log e vincoli "
+            + "ai dischi." + chr(10)
+            + "I percorsi locali del piano (push) andranno adattati a mano."
+            + chr(10) * 2 + "Procedo?")
+        if risposta != QMessageBox.Yes:
+            return
+        try:
+            ub.CONFIG_PATH.write_text(json.dumps(nuova, indent=2, ensure_ascii=False),
+                                      encoding="utf-8")
+            if piano:
+                bersaglio = ub.dest_root_of(nuova) / ub.MARKER_NAME
+                bersaglio.parent.mkdir(parents=True, exist_ok=True)
+                bersaglio.write_text(json.dumps(piano, indent=2, ensure_ascii=False),
+                                     encoding="utf-8")
+        except OSError as exc:
+            self.toast(f"Scrittura fallita: {exc}", "err")
+            return
+        self.cfg = ub.load_config()
+        ub.setup_log(self.cfg.get("log_file"))
+        self.load_cfg()
+        self.load_pc_plan()
+        self.refresh_volumes()
+        self.toast("Importato: controlla i percorsi nella scheda Questo PC", "ok")
 
     def autostart(self, install: bool):
         rc = ub.install_autostart() if install else ub.uninstall_autostart()

@@ -57,6 +57,7 @@ DEFAULT_CONFIG = {
     "copy_threads": 8,
     "verify_percent": 1,
     "use_gitignore": False,
+    "stale_days": 7,
     "run_on_start": True,
     "close_to_tray": True,
     "start_minimized": False,
@@ -628,19 +629,36 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
     ignora = GitIgnore() if gitignore else None
 
     # --- 1. giro dell'albero: decide cosa copiare, cosa saltare ---
-    for dirpath, dirnames, filenames in os.walk(src, followlinks=False):
+    # Si usa os.scandir invece di os.walk: su Windows l'elenco di una cartella
+    # porta gia' con se' dimensione e data di ogni voce, quindi non serve una
+    # chiamata stat per file. La destinazione si legge una volta per cartella
+    # invece di interrogarla file per file: su 100.000 file sono 200.000
+    # chiamate di sistema in meno.
+    def voci(cartella: Path) -> dict[str, tuple[int, float, bool]]:
+        trovate: dict[str, tuple[int, float, bool]] = {}
+        try:
+            with os.scandir(cartella) as elenco:
+                for voce in elenco:
+                    try:
+                        info = voce.stat(follow_symlinks=False)
+                        trovate[voce.name] = (info.st_size, info.st_mtime,
+                                              voce.is_dir(follow_symlinks=False))
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+        return trovate
+
+    da_visitare: list[tuple[Path, Path]] = [(src, Path("."))]
+    while da_visitare:
         if stop_requested():
             raise Stopped()
-        here = Path(dirpath)
-        rel = here.relative_to(src)
+        here, rel = da_visitare.pop()
         rel_posix = "" if str(rel) == "." else rel.as_posix()
         if ignora is not None:
             ignora.carica(here, rel_posix)
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if not is_excluded(rel / d, d, excludes) and _norm(here / d) not in skip
-            and not (ignora is not None and ignora.ignora(rel_posix, d, True))
-        )
+
+        sorgenti = voci(here)
         target_dir = dst / rel
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
@@ -648,28 +666,32 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
             log(f"    [errore] mkdir {target_dir}: {exc}")
             stats["errors"] += 1
             continue
+        destinazioni = voci(target_dir)
 
-        names = set(dirnames)
-        for fname in filenames:
-            if fname.endswith(PART_SUFFIX):
+        names: set[str] = set()
+        for nome, (size, mtime, e_cartella) in sorted(sorgenti.items()):
+            if is_excluded(rel / nome, nome, excludes):
                 continue
-            if is_excluded(rel / fname, fname, excludes):
+            if ignora is not None and ignora.ignora(rel_posix, nome, e_cartella):
                 continue
-            if ignora is not None and ignora.ignora(rel_posix, fname, False):
+            if e_cartella:
+                if _norm(here / nome) in skip:
+                    continue
+                names.add(nome)
+                da_visitare.append((here / nome, rel / nome))
                 continue
-            names.add(fname)
-            s_file = here / fname
-            d_file = target_dir / fname
-            try:
-                size = s_file.stat().st_size
-            except OSError:
-                size = 0
-            if needs_copy(s_file, d_file):
-                da_copiare.append((s_file, d_file, size))
-            else:
+            if nome.endswith(PART_SUFFIX):
+                continue
+            names.add(nome)
+            gia = destinazioni.get(nome)
+            uguale = (gia is not None and not gia[2]
+                      and gia[0] == size and abs(gia[1] - mtime) <= MTIME_TOLERANCE)
+            if uguale:
                 stats["skipped"] += 1
                 if progress:
                     progress.advance(size, copied=False)
+            else:
+                da_copiare.append((here / nome, target_dir / nome, size))
         kept[target_dir] = names
 
     # --- 2. copie vere, in parallelo se richiesto ---
@@ -964,6 +986,64 @@ def record_history(voce: dict) -> None:
         path.write_text(json.dumps(storia, indent=1, ensure_ascii=False), encoding="utf-8")
     except Exception as exc:
         log(f"[errore] storico non salvato: {exc}")
+
+
+SETTINGS_FILE = "usb-backup-impostazioni.json"
+
+# Cio' che e' proprio di questa macchina e non va portato altrove: percorsi
+# locali, nome del PC, vincoli a un disco preciso.
+CHIAVI_LOCALI = ("dest_root", "log_file", "watch_enabled")
+
+
+def export_settings(dove: Path, cfg: dict) -> Path:
+    """Scrive impostazioni e piano su un disco, per riportarli su un altro PC."""
+    piano = read_pc_plan(cfg) or {}
+    dati = {
+        "creato": datetime.now().isoformat(timespec="seconds"),
+        "da_pc": machine_name(piano),
+        "config": {k: v for k, v in cfg.items() if k not in CHIAVI_LOCALI},
+        "piano": piano,
+    }
+    percorso = Path(dove) / SETTINGS_FILE
+    percorso.write_text(json.dumps(dati, indent=2, ensure_ascii=False), encoding="utf-8")
+    log(f"[esportato] {percorso}")
+    return percorso
+
+
+def import_settings(percorso: Path, cfg: dict) -> tuple[dict, dict]:
+    """Legge un file esportato. Ritorna (config aggiornata, piano).
+
+    I percorsi locali di questa macchina restano quelli che sono: importare
+    il `dest_root` di un altro PC creerebbe cartelle a caso.
+    """
+    dati = json.loads(Path(percorso).read_text(encoding="utf-8-sig"))
+    if not isinstance(dati, dict) or "config" not in dati:
+        raise ValueError("file di impostazioni non riconosciuto")
+    nuova = dict(cfg)
+    for chiave, valore in (dati.get("config") or {}).items():
+        if chiave not in CHIAVI_LOCALI:
+            nuova[chiave] = valore
+    piano = dict(dati.get("piano") or {})
+    # il vincolo al disco e il nome del PC appartengono all'altra macchina
+    piano.pop("only_serials", None)
+    piano.pop("pc_name", None)
+    return nuova, piano
+
+
+def giorni_da_ultimo_backup() -> dict[str, float]:
+    """Per ogni volume visto nello storico, da quanti giorni non lo colleghi."""
+    adesso = datetime.now()
+    visti: dict[str, float] = {}
+    for voce in read_history():
+        nome = str(voce.get("volume", ""))
+        if not nome or nome in visti:
+            continue
+        try:
+            quando = datetime.fromisoformat(str(voce.get("quando")))
+        except (TypeError, ValueError):
+            continue
+        visti[nome] = (adesso - quando).total_seconds() / 86400
+    return visti
 
 
 def _totals_path() -> Path:

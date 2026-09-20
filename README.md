@@ -250,6 +250,70 @@ non tocca niente e lo scrive nel log: quasi sempre significa percorso sbagliato 
 disco montato a meta'. Salta la coppia se trova `.git/index.lock`, cioe' se git sta
 lavorando in quel momento.
 
+## Sicurezza dei dati
+
+**Niente viene cancellato.** Quello che sparisce da un lato finisce in
+`__deleted/` dentro la destinazione, con la stessa struttura di cartelle.
+Si svuota a mano quando serve spazio.
+
+**Copia atomica.** Ogni file viene scritto su `nome.usbpart` e rinominato solo
+a copia finita. Se stacchi il disco a meta', la versione precedente resta
+intatta e il file viene ricopiato al giro dopo. Senza questo resterebbe un file
+troncato con data e dimensione da file nuovo, che nessun confronto avrebbe piu'
+riconosciuto come rotto.
+
+**Controllo dello spazio.** Prima di copiare legge lo spazio libero; se la
+destinazione e' vuota e non ci sta, non comincia nemmeno. Durante la copia lo
+spazio viene *prenotato* file per file (con piu' thread il solo controllo non
+basterebbe) e si ferma pulito prima di riempire il disco, lasciando 256 MB di
+riserva.
+
+**Verifica a campione.** Dopo ogni giro ricalcola lo sha256 di una percentuale
+dei file copiati (default 1%) e la confronta con l'originale: e' l'unico modo
+di accorgersi dei guasti silenziosi, che per data e dimensione sembrano file a
+posto.
+
+**Vincolo al disco.** Un piano puo' essere legato al numero di serie del volume
+invece che alla lettera di unita' o all'etichetta, che cambiano. Nella scheda
+*Questo PC*, pulsante "Lega al disco selezionato".
+
+**Pulsante Ferma.** Un giro lungo si interrompe quando vuoi: finisce il file
+corrente e si ferma. Al giro successivo riprende da dove era.
+
+## Velocita'
+
+Il confronto usa `os.scandir`, che su Windows restituisce gia' dimensione e
+data di ogni voce, e legge la cartella di destinazione una volta sola invece
+che file per file. Su 8.000 file gia' sincronizzati: **286 ms contro 2.280**,
+otto volte piu' veloce del confronto ingenuo.
+
+Le copie vanno in parallelo (`copy_threads`, default 8): su file piccoli si
+passa da ~640 a ~930 file al secondo, perche' il tempo se ne va in apertura e
+chiusura, non in banda.
+
+I totali del giro precedente fanno da stima per la barra di avanzamento, cosi'
+l'albero si percorre una volta sola invece di due.
+
+## Portare la configurazione sull'altro PC
+
+Nella scheda *Impostazioni*: **Esporta sul disco** scrive
+`usb-backup-impostazioni.json` sulla chiavetta selezionata, **Importa da file**
+lo rilegge sull'altra macchina. Restano com'erano le cose locali - cartella dei
+backup, file di log, vincoli ai dischi, nome del PC - e vengono adottate solo
+le impostazioni condivisibili. I percorsi locali del push vanno adattati a mano.
+
+## Test
+
+```bash
+python tests/run_tests.py            # tutte
+python tests/run_tests.py sync stop  # solo quelle che contengono sync o stop
+python tests/run_tests.py --bench    # anche le misure di velocita'
+```
+
+Diciassette suite, ognuna in un processo separato. Coprono i tre piani, la
+sincronizzazione a due vie, il cestino, lo spazio, lo stop, la verifica, i
+`.gitignore`, il vincolo al serial, la tray, lo storico e la portabilita'.
+
 ## Come copia
 
 Mirror incrementale: un file viene ricopiato solo se ha **dimensione diversa** o
