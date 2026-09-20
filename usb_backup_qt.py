@@ -559,9 +559,9 @@ def reveal(path: Path) -> None:
         if ub.IS_WIN:
             os.startfile(str(path))  # noqa: S606
         elif ub.IS_MAC:
-            subprocess.run(["open", str(path)], check=False)
+            ub.run_hidden(["open", str(path)], check=False)
         else:
-            subprocess.run(["xdg-open", str(path)], check=False)
+            ub.run_hidden(["xdg-open", str(path)], check=False)
     except Exception as exc:
         ub.log(f"[errore] apertura {path}: {exc}")
 

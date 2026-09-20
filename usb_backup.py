@@ -266,12 +266,26 @@ def scan_tree(base: Path, excludes: list[str]) -> tuple[int, int]:
     return files, total
 
 
+CREATE_NO_WINDOW = 0x08000000    # niente finestra nera che lampeggia
+
+
+def run_hidden(comando: list[str], **kw):
+    """subprocess.run senza far sbattere in faccia una console.
+
+    Su Windows ogni processo a riga di comando apre la sua finestra: per una
+    notifica di fine backup significa un lampo nero sullo schermo.
+    """
+    if IS_WIN:
+        kw.setdefault("creationflags", CREATE_NO_WINDOW)
+    return subprocess.run(comando, **kw)
+
+
 def notify(title: str, message: str) -> None:
     try:
         if IS_MAC:
             script = (f'display notification {json.dumps(message)} '
                       f'with title {json.dumps(title)}')
-            subprocess.run(["osascript", "-e", script],
+            run_hidden(["osascript", "-e", script],
                            check=False, capture_output=True, timeout=10)
         elif IS_WIN:
             ps = (
@@ -284,7 +298,7 @@ def notify(title: str, message: str) -> None:
                 '[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('
                 '"USB Backup").Show([Windows.UI.Notifications.ToastNotification]::new($t));'
             )
-            subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+            run_hidden(["powershell", "-NoProfile", "-Command", ps],
                            check=False, capture_output=True, timeout=20)
     except Exception:
         pass
@@ -346,7 +360,7 @@ def volume_serial(root: Path) -> str:
         return f"{serial.value:08X}" if ok and serial.value else ""
     if IS_MAC:
         try:
-            uscita = subprocess.run(["diskutil", "info", str(root)],
+            uscita = run_hidden(["diskutil", "info", str(root)],
                                     capture_output=True, text=True, timeout=10)
             for riga in uscita.stdout.splitlines():
                 if "Volume UUID" in riga:
@@ -1749,7 +1763,7 @@ def install_autostart() -> int:
     script = str(APP_DIR / "usb_backup.py")
     if IS_WIN:
         cmd = launch_command()
-        res = subprocess.run(
+        res = run_hidden(
             ["schtasks", "/Create", "/TN", TASK_NAME, "/TR", cmd,
              "/SC", "ONLOGON", "/RL", "LIMITED", "/F"],
             capture_output=True, text=True,
@@ -1781,8 +1795,8 @@ def install_autostart() -> int:
 </plist>
 """
         PLIST_PATH.write_text(plist, encoding="utf-8")
-        subprocess.run(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
-        res = subprocess.run(["launchctl", "load", str(PLIST_PATH)],
+        run_hidden(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
+        res = run_hidden(["launchctl", "load", str(PLIST_PATH)],
                              capture_output=True, text=True)
         print((res.stdout or res.stderr).strip() or f"OK, installato: {PLIST_PATH}")
         return res.returncode
@@ -1792,12 +1806,12 @@ def install_autostart() -> int:
 
 def uninstall_autostart() -> int:
     if IS_WIN:
-        res = subprocess.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
+        res = run_hidden(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
                              capture_output=True, text=True)
         print((res.stdout or res.stderr).strip())
         return res.returncode
     if IS_MAC:
-        subprocess.run(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
+        run_hidden(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
         PLIST_PATH.unlink(missing_ok=True)
         print(f"Rimosso: {PLIST_PATH}")
         return 0
