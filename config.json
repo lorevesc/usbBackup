@@ -1,0 +1,23 @@
+{
+  "dest_root": "~/Backup",
+  "poll_seconds": 3,
+  "include_fixed_drives": true,
+  "notify": true,
+  "rescan_cooldown_minutes": 15,
+  "missing_polls_before_removed": 3,
+  "run_on_start": true,
+  "close_to_tray": true,
+  "heartbeat_minutes": 0,
+  "log_file": "~/Backup/_logs/usb-backup.log",
+  "default_exclude": [
+    "System Volume Information",
+    "$RECYCLE.BIN",
+    ".Spotlight-V100",
+    ".Trashes",
+    ".fseventsd",
+    "._*",
+    "Thumbs.db",
+    ".DS_Store"
+  ],
+  "watch_enabled": true
+}

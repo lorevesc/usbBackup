@@ -1,0 +1,16 @@
+# roba prodotta dalla compilazione
+dist/
+build/
+*.spec
+
+# cache di Python
+__pycache__/
+*.py[cod]
+
+# provino dell'icona: si rigenera con `python appicon.py --preview`
+assets/preview.png
+
+# log e stato locali, se mai finissero qui dentro
+_logs/
+scan-totals.json
+history.json

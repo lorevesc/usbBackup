@@ -1,0 +1,26 @@
+{
+  "_nota": "Copiare in ~/Backup/backup.json (accanto alle cartelle di destinazione).",
+
+  "pc_name": null,
+
+  "only_volumes": ["chiavetta-lavoro", "KINGSTON*"],
+
+  "push": {
+    "target_subdir": "backup",
+    "folders": [
+      "~/Documents/Progetti",
+      { "path": "C:/WorkArea/email_manager", "as": "email-manager" }
+    ],
+    "exclude": ["*.tmp", "node_modules", ".git", "__pycache__"],
+    "delete_extra": false
+  },
+
+  "pull": {
+    "folders": [
+      "Documenti",
+      { "path": "foto", "as": "foto-chiavetta" }
+    ],
+    "exclude": ["*.tmp"],
+    "delete_extra": false
+  }
+}

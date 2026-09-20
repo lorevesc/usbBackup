@@ -1,0 +1,13 @@
+{
+  "name": "chiavetta-lavoro",
+
+  "folders": [
+    "Documenti",
+    "Progetti/2026",
+    { "path": "foto", "as": "foto-chiavetta" }
+  ],
+
+  "exclude": ["*.tmp", "~$*", "node_modules", "cache/*"],
+
+  "delete_extra": false
+}
