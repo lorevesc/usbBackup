@@ -24,12 +24,14 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QButtonGroup,
                                QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
                                QPlainTextEdit, QPushButton, QScrollArea,
                                QSizePolicy, QSplitter, QStackedWidget,
-                               QSystemTrayIcon, QTableWidget, QTableWidgetItem,
+                               QComboBox, QSystemTrayIcon, QTableWidget,
+                               QTableWidgetItem,
                                QVBoxLayout, QWidget)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import appicon  # noqa: E402
 import usb_backup as ub  # noqa: E402
+from i18n import t, tf  # noqa: E402
 
 # --------------------------------------------------------------------------
 # palette
@@ -99,6 +101,15 @@ QPushButton[kind="ghost"]:hover {{ background: {C['card_hi']}; color: {C['text']
 QPushButton[kind="danger"] {{ background: transparent; border-color: #4a2b32; color: {C['danger']}; }}
 QPushButton[kind="danger"]:hover {{ background: #2a1a1e; }}
 QPushButton[kind="tiny"] {{ padding: 5px 10px; font-size: 12px; }}
+
+/* ---------- menu a tendina ---------- */
+QComboBox {{ background: {C['input']}; border: 1px solid {C['line']};
+             border-radius: 9px; padding: 8px 10px; }}
+QComboBox:hover {{ border-color: {C['line_hi']}; }}
+QComboBox::drop-down {{ border: none; width: 24px; }}
+QComboBox QAbstractItemView {{ background: {C['card']}; border: 1px solid {C['line_hi']};
+                               selection-background-color: {C['accent_dk']};
+                               padding: 4px; }}
 
 /* ---------- badge ---------- */
 #badge {{ background: #1c232f; color: {C['muted']}; border-radius: 6px;
@@ -365,7 +376,7 @@ class FolderList(QWidget):
     def _render(self):
         self._clear()
         if not self.rows:
-            self.holder.addWidget(label("Nessuna cartella impostata.", "hint"))
+            self.holder.addWidget(label(t("Nessuna cartella impostata."), "hint"))
             return
         for index, row in enumerate(self.rows):
             self.holder.addWidget(self._row_widget(index, row))
@@ -394,7 +405,7 @@ class FolderList(QWidget):
         remove = QPushButton("✕")
         remove.setObjectName("xbtn")
         remove.setCursor(Qt.PointingHandCursor)
-        remove.setToolTip("Rimuovi")
+        remove.setToolTip(t("Rimuovi"))
         remove.clicked.connect(lambda _=False, i=index: self._remove(i))
         lay.addWidget(remove)
         return frame
@@ -445,12 +456,12 @@ class VolumeCard(QFrame):
 
         badges = QHBoxLayout()
         badges.setSpacing(6)
-        badges.addWidget(self._badge("rimovibile" if volume["removable"] else "disco fisso",
+        badges.addWidget(self._badge(t("rimovibile") if volume["removable"] else t("disco fisso"),
                                      "" if volume["removable"] else "dim"))
-        badges.addWidget(self._badge("backup.json" if volume["has_plan"] else "nessun piano",
+        badges.addWidget(self._badge(t("backup.json") if volume["has_plan"] else t("nessun piano"),
                                      "ok" if volume["has_plan"] else "dim"))
         if volume["pc_plan"]:
-            badges.addWidget(self._badge("piano PC", "accent"))
+            badges.addWidget(self._badge(t("piano PC"), "accent"))
         if volume.get("serial"):
             badges.addWidget(self._badge("n. " + volume["serial"], "dim"))
         badges.addStretch(1)
@@ -573,7 +584,7 @@ def reveal(path: Path) -> None:
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("USB Backup")
+        self.setWindowTitle(t("USB Backup"))
         self.resize(1240, 860)
         self.setMinimumSize(1060, 720)
 
@@ -637,7 +648,7 @@ class Window(QMainWindow):
         head_lay = QHBoxLayout(head)
         head_lay.setContentsMargins(30, 24, 30, 12)
         head_lay.setSpacing(14)
-        self.h1 = label("Chiavette", "h1")
+        self.h1 = label(t("Chiavette"), "h1")
         self.h2 = label("", "h2")
         head_lay.addWidget(self.h1)
         head_lay.addWidget(self.h2)
@@ -698,14 +709,14 @@ class Window(QMainWindow):
         logo.setPixmap(mark)
         logo.setFixedSize(32, 32)
         brand.addWidget(logo)
-        brand.addWidget(label("USB Backup", "brand"))
+        brand.addWidget(label(t("USB Backup"), "brand"))
         brand.addStretch(1)
         lay.addLayout(brand)
 
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
-        for index, text in enumerate(("Chiavette", "Questo PC", "Storico",
-                                      "Impostazioni")):
+        for index, text in enumerate((t("Chiavette"), t("Questo PC"), t("Storico"),
+                                      t("Impostazioni"))):
             btn = QPushButton(text)
             btn.setObjectName("nav")
             btn.setCheckable(True)
@@ -719,10 +730,10 @@ class Window(QMainWindow):
         box = QVBoxLayout()
         box.setContentsMargins(18, 0, 18, 0)
         box.setSpacing(9)
-        self.sw_watch = Switch("sorveglianza spenta")
+        self.sw_watch = Switch(t("sorveglianza spenta"))
         self.sw_watch.toggled.connect(self.toggle_watch)
         box.addWidget(self.sw_watch)
-        hint = label("Copia da sola a ogni chiavetta collegata.", "sidehint")
+        hint = label(t("Copia da sola a ogni chiavetta collegata."), "sidehint")
         hint.setWordWrap(True)
         box.addWidget(hint)
         lay.addLayout(box)
@@ -744,39 +755,39 @@ class Window(QMainWindow):
         self.avviso.setVisible(False)
         lay.addWidget(self.avviso)
 
-        vols = Card("Volumi collegati", "Seleziona una chiavetta per configurarla.")
-        vols.head.addWidget(button("Aggiorna", "ghost", self.refresh_volumes))
+        vols = Card(t("Volumi collegati"), t("Seleziona una chiavetta per configurarla."))
+        vols.head.addWidget(button(t("Aggiorna"), "ghost", self.refresh_volumes))
         self.vol_grid = QGridLayout()
         self.vol_grid.setSpacing(11)
         vols.body.addLayout(self.vol_grid)
         lay.addWidget(vols)
 
-        card = Card("backup.json della chiavetta", "—", "CHIAVETTA → PC")
+        card = Card(t("backup.json della chiavetta"), "—", t("CHIAVETTA → PC"))
         self.stick_card = card
 
         self.st_name = QLineEdit()
         self.st_name.textChanged.connect(self.update_stick_dest)
-        card.field("Nome della cartella di destinazione", self.st_name,
-                   "Vuoto = etichetta del volume.")
+        card.field(t("Nome della cartella di destinazione"), self.st_name,
+                   t("Vuoto = etichetta del volume."))
 
-        self.st_folders = FolderList("+  Aggiungi cartella", self.pick_stick_folder)
-        card.field("Cartelle della chiavetta da copiare sul PC", self.st_folders)
+        self.st_folders = FolderList(t("+  Aggiungi cartella"), self.pick_stick_folder)
+        card.field(t("Cartelle della chiavetta da copiare sul PC"), self.st_folders)
 
         cols = QHBoxLayout()
         cols.setSpacing(24)
         left = QVBoxLayout()
         left.setSpacing(6)
-        left.addWidget(label("Esclusioni (una per riga, glob)", "label"))
+        left.addWidget(label(t("Esclusioni (una per riga, glob)"), "label"))
         self.st_exclude = QPlainTextEdit()
         self.st_exclude.setFixedHeight(88)
         self.st_exclude.setPlaceholderText("*.tmp\nnode_modules")
         left.addWidget(self.st_exclude)
         right = QVBoxLayout()
         right.setSpacing(6)
-        right.addWidget(label("Opzioni", "label"))
-        self.st_delete = Switch("Sposta in __deleted i file spariti dalla chiavetta")
+        right.addWidget(label(t("Opzioni"), "label"))
+        self.st_delete = Switch(t("Sposta in __deleted i file spariti dalla chiavetta"))
         right.addWidget(self.st_delete)
-        note = label("Niente viene mai cancellato: finisce in __deleted, accanto alla copia.", "hint")
+        note = label(t("Niente viene mai cancellato: finisce in __deleted, accanto alla copia."), "hint")
         note.setWordWrap(True)
         right.addWidget(note)
         right.addStretch(1)
@@ -787,16 +798,16 @@ class Window(QMainWindow):
 
         bar = QHBoxLayout()
         bar.setSpacing(9)
-        bar.addWidget(button("Salva sulla chiavetta", "primary", self.save_stick_plan))
-        self.btn_backup = button("Backup adesso", "normal", self.backup_now)
+        bar.addWidget(button(t("Salva sulla chiavetta"), "primary", self.save_stick_plan))
+        self.btn_backup = button(t("Backup adesso"), "normal", self.backup_now)
         bar.addWidget(self.btn_backup)
-        self.btn_stop = button("Ferma", "danger", self.stop_now)
+        self.btn_stop = button(t("Ferma"), "danger", self.stop_now)
         self.btn_stop.setVisible(False)
         bar.addWidget(self.btn_stop)
-        bar.addWidget(button("Apri chiavetta", "ghost",
+        bar.addWidget(button(t("Apri chiavetta"), "ghost",
                              lambda: self.volume and reveal(Path(self.volume["path"]))))
         bar.addStretch(1)
-        bar.addWidget(button("Elimina backup.json", "danger", self.delete_stick_plan))
+        bar.addWidget(button(t("Elimina backup.json"), "danger", self.delete_stick_plan))
         card.body.addSpacing(20)
         card.body.addLayout(bar)
 
@@ -811,18 +822,18 @@ class Window(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(16)
 
-        ident = Card("Identità e filtro", "—")
+        ident = Card(t("Identità e filtro"), "—")
         self.pc_card = ident
         self.pc_name = QLineEdit()
         self.pc_name.setPlaceholderText(ub.machine_name())
         self.pc_name.textChanged.connect(self.update_pc_dest)
-        ident.field("Nome di questo PC", self.pc_name,
-                    "Vuoto = hostname. È il nome della cartella creata sulla chiavetta.")
+        ident.field(t("Nome di questo PC"), self.pc_name,
+                    t("Vuoto = hostname. È il nome della cartella creata sulla chiavetta."))
         self.pc_only = QPlainTextEdit()
         self.pc_only.setFixedHeight(72)
         self.pc_only.setPlaceholderText("chiavetta-lavoro\nKINGSTON*")
-        ident.field("Applica solo a queste chiavette (una per riga, glob)", self.pc_only,
-                    "Vuoto = tutte le chiavette rimovibili, mai i dischi fissi.")
+        ident.field(t("Applica solo a queste chiavette (una per riga, glob)"), self.pc_only,
+                    t("Vuoto = tutte le chiavette rimovibili, mai i dischi fissi."))
 
         riga = QWidget()
         lega = QHBoxLayout(riga)
@@ -830,37 +841,37 @@ class Window(QMainWindow):
         lega.setSpacing(9)
         self.lbl_serial = label("", "mono")
         lega.addWidget(self.lbl_serial, 1)
-        lega.addWidget(button("Lega al disco selezionato", "normal", self.bind_serial))
-        lega.addWidget(button("Togli il vincolo", "ghost", self.unbind_serial))
-        ident.field("Vincolo al disco (numero di serie)", riga,
-                    "Il piu' solido: la lettera di unita' cambia e l'etichetta la "
-                    "cambia chiunque, il numero di serie no. Se impostato vale solo "
-                    "questo, e le regole qui sopra vengono ignorate.")
+        lega.addWidget(button(t("Lega al disco selezionato"), "normal", self.bind_serial))
+        lega.addWidget(button(t("Togli il vincolo"), "ghost", self.unbind_serial))
+        ident.field(t("Vincolo al disco (numero di serie)"), riga,
+                    t("Il piu' solido: la lettera di unita' cambia e l'etichetta la "
+                      "cambia chiunque, il numero di serie no. Se impostato vale solo "
+                      "questo, e le regole qui sopra vengono ignorate."))
         lay.addWidget(ident)
 
-        push = Card("Push", "—", "PC → CHIAVETTA")
+        push = Card(t("Push"), "—", t("PC → CHIAVETTA"))
         self.push_card = push
-        self.push_folders = FolderList("+  Aggiungi cartella del PC", self.pick_pc_folder)
-        push.field("Cartelle del PC da spedire sulla chiavetta", self.push_folders)
+        self.push_folders = FolderList(t("+  Aggiungi cartella del PC"), self.pick_pc_folder)
+        push.field(t("Cartelle del PC da spedire sulla chiavetta"), self.push_folders)
         cols = QHBoxLayout()
         cols.setSpacing(24)
         left = QVBoxLayout()
         left.setSpacing(6)
-        left.addWidget(label("Cartella radice sulla chiavetta", "label"))
+        left.addWidget(label(t("Cartella radice sulla chiavetta"), "label"))
         self.push_subdir = QLineEdit()
         self.push_subdir.setPlaceholderText("backup")
         self.push_subdir.textChanged.connect(self.update_pc_dest)
         left.addWidget(self.push_subdir)
         left.addSpacing(8)
-        left.addWidget(label("Esclusioni", "label"))
+        left.addWidget(label(t("Esclusioni"), "label"))
         self.push_exclude = QPlainTextEdit()
         self.push_exclude.setFixedHeight(72)
         self.push_exclude.setPlaceholderText("node_modules\n.git")
         left.addWidget(self.push_exclude)
         right = QVBoxLayout()
         right.setSpacing(6)
-        right.addWidget(label("Opzioni", "label"))
-        self.push_delete = Switch("Sposta in __deleted sulla chiavetta ciò che non c'è più sul PC")
+        right.addWidget(label(t("Opzioni"), "label"))
+        self.push_delete = Switch(t("Sposta in __deleted sulla chiavetta ciò che non c'è più sul PC"))
         right.addWidget(self.push_delete)
         right.addStretch(1)
         cols.addLayout(left, 1)
@@ -869,11 +880,11 @@ class Window(QMainWindow):
         push.body.addLayout(cols)
         lay.addWidget(push)
 
-        pull = Card("Pull", "—", "CHIAVETTA → PC")
+        pull = Card(t("Pull"), "—", t("CHIAVETTA → PC"))
         self.pull_card = pull
-        self.pull_folders = FolderList("+  Aggiungi cartella della chiavetta",
+        self.pull_folders = FolderList(t("+  Aggiungi cartella della chiavetta"),
                                        self.pick_stick_folder)
-        pull.field("Cartelle della chiavetta da prendere", self.pull_folders)
+        pull.field(t("Cartelle della chiavetta da prendere"), self.pull_folders)
 
         dest_row = QWidget()
         dest_lay = QHBoxLayout(dest_row)
@@ -882,23 +893,23 @@ class Window(QMainWindow):
         self.pull_dest = QLineEdit()
         self.pull_dest.textChanged.connect(self.update_pc_dest)
         dest_lay.addWidget(self.pull_dest, 1)
-        dest_lay.addWidget(button("Sfoglia", "normal", self.pick_pull_dest))
-        pull.field("Cartella di destinazione sul PC", dest_row,
-                   "Vuoto = ~/Backup/<nome del disco>. Mettici una cartella di staging se "
-                   "vuoi confrontare e unire a mano, senza toccare il progetto vero.")
+        dest_lay.addWidget(button(t("Sfoglia"), "normal", self.pick_pull_dest))
+        pull.field(t("Cartella di destinazione sul PC"), dest_row,
+                   t("Vuoto = ~/Backup/<nome del disco>. Mettici una cartella di staging se "
+                     "vuoi confrontare e unire a mano, senza toccare il progetto vero."))
         cols2 = QHBoxLayout()
         cols2.setSpacing(24)
         left2 = QVBoxLayout()
         left2.setSpacing(6)
-        left2.addWidget(label("Esclusioni", "label"))
+        left2.addWidget(label(t("Esclusioni"), "label"))
         self.pull_exclude = QPlainTextEdit()
         self.pull_exclude.setFixedHeight(72)
         self.pull_exclude.setPlaceholderText("*.tmp")
         left2.addWidget(self.pull_exclude)
         right2 = QVBoxLayout()
         right2.setSpacing(6)
-        right2.addWidget(label("Opzioni", "label"))
-        self.pull_delete = Switch("Sposta in __deleted sul PC ciò che non c'è più sulla chiavetta")
+        right2.addWidget(label(t("Opzioni"), "label"))
+        self.pull_delete = Switch(t("Sposta in __deleted sul PC ciò che non c'è più sulla chiavetta"))
         right2.addWidget(self.pull_delete)
         right2.addStretch(1)
         cols2.addLayout(left2, 1)
@@ -908,18 +919,18 @@ class Window(QMainWindow):
 
         bar = QHBoxLayout()
         bar.setSpacing(9)
-        bar.addWidget(button("Salva piano del PC", "primary", self.save_pc_plan))
-        bar.addWidget(button("Ricarica", "ghost", self.load_pc_plan))
+        bar.addWidget(button(t("Salva piano del PC"), "primary", self.save_pc_plan))
+        bar.addWidget(button(t("Ricarica"), "ghost", self.load_pc_plan))
         bar.addStretch(1)
-        bar.addWidget(button("Elimina piano del PC", "danger", self.delete_pc_plan))
+        bar.addWidget(button(t("Elimina piano del PC"), "danger", self.delete_pc_plan))
         pull.body.addSpacing(20)
         pull.body.addLayout(bar)
         lay.addWidget(pull)
         return page
 
     # ------------------------------------------------------- pagina storico
-    COLONNE = ("Quando", "Volume", "Copiati", "Invariati", "In __deleted",
-               "Errori", "Dati", "Durata")
+    COLONNE = (t("Quando"), t("Volume"), t("Copiati"), t("Invariati"), t("In __deleted"),
+               t("Errori"), t("Dati"), t("Durata"))
 
     def _page_history(self) -> QWidget:
         page = QWidget()
@@ -928,9 +939,9 @@ class Window(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(16)
 
-        card = Card("Ultimi backup", "—")
+        card = Card(t("Ultimi backup"), "—")
         self.history_card = card
-        card.head.addWidget(button("Aggiorna", "ghost", self.load_history))
+        card.head.addWidget(button(t("Aggiorna"), "ghost", self.load_history))
         self.history_table = QTableWidget(0, len(self.COLONNE))
         self.history_table.setHorizontalHeaderLabels(self.COLONNE)
         self.history_table.verticalHeader().setVisible(False)
@@ -945,7 +956,7 @@ class Window(QMainWindow):
 
         riga = QHBoxLayout()
         riga.setSpacing(9)
-        riga.addWidget(button("Apri la cartella dei log", "ghost",
+        riga.addWidget(button(t("Apri la cartella dei log"), "ghost",
                               lambda: reveal(Path(str(self.cfg.get("log_file") or
                                                       ub.APP_DIR)).expanduser().parent)))
         riga.addStretch(1)
@@ -984,10 +995,10 @@ class Window(QMainWindow):
             ultimo = storia[0]
             self.history_card.sub.setText(
                 f"{len(storia)} giri registrati - l'ultimo "
-                f"{str(ultimo.get('quando', '')).replace('T', ' alle ')}")
+                f"{str(ultimo.get('quando', '')).replace('T', t(' alle '))}")
         else:
             self.history_card.sub.setText(
-                "Ancora nessun giro: appena ne parte uno compare qui.")
+                t("Ancora nessun giro: appena ne parte uno compare qui."))
         self.history_card.sub.setVisible(True)
 
     # ------------------------------------------------------------ pagina 3
@@ -998,7 +1009,7 @@ class Window(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(16)
 
-        card = Card("Generali", "—")
+        card = Card(t("Generali"), "—")
         self.cfg_card = card
         dest_row = QWidget()
         dest_lay = QHBoxLayout(dest_row)
@@ -1006,20 +1017,20 @@ class Window(QMainWindow):
         dest_lay.setSpacing(9)
         self.cfg_dest = QLineEdit()
         dest_lay.addWidget(self.cfg_dest, 1)
-        dest_lay.addWidget(button("Sfoglia", "normal", self.pick_dest))
-        card.field("Cartella dei backup sul PC", dest_row,
-                   "Qui dentro vive anche il backup.json del PC.")
+        dest_lay.addWidget(button(t("Sfoglia"), "normal", self.pick_dest))
+        card.field(t("Cartella dei backup sul PC"), dest_row,
+                   t("Qui dentro vive anche il backup.json del PC."))
 
         cols = QHBoxLayout()
         cols.setSpacing(24)
         left = QVBoxLayout()
         left.setSpacing(6)
-        left.addWidget(label("File di log", "label"))
+        left.addWidget(label(t("File di log"), "label"))
         self.cfg_log = QLineEdit()
         left.addWidget(self.cfg_log)
         right = QVBoxLayout()
         right.setSpacing(6)
-        right.addWidget(label("Controlla i volumi ogni (secondi)", "label"))
+        right.addWidget(label(t("Controlla i volumi ogni (secondi)"), "label"))
         self.cfg_poll = QLineEdit()
         self.cfg_poll.setFixedWidth(90)
         right.addWidget(self.cfg_poll)
@@ -1033,27 +1044,39 @@ class Window(QMainWindow):
         self.cfg_fixed = Switch("Considera anche i dischi \"fissi\" non di sistema")
         card.body.addWidget(self.cfg_fixed)
         card.body.addSpacing(4)
-        card.body.addWidget(label("Molti SSD USB su Windows si presentano come disco fisso.", "hint"))
+        card.body.addWidget(label(t("Molti SSD USB su Windows si presentano come disco fisso."), "hint"))
         card.body.addSpacing(12)
-        self.cfg_notify = Switch("Notifica di sistema a fine backup")
+        self.cfg_notify = Switch(t("Notifica di sistema a fine backup"))
         card.body.addWidget(self.cfg_notify)
         card.body.addSpacing(12)
-        self.cfg_tray = Switch("Chiudendo la finestra resta nella tray")
+        self.cfg_tray = Switch(t("Chiudendo la finestra resta nella tray"))
         card.body.addWidget(self.cfg_tray)
         card.body.addSpacing(12)
-        self.cfg_minimized = Switch("All'avvio parti direttamente nella tray")
+        self.cfg_minimized = Switch(t("All'avvio parti direttamente nella tray"))
         card.body.addWidget(self.cfg_minimized)
         card.body.addSpacing(4)
-        card.body.addWidget(label("Comodo con l'avvio automatico: il programma si "
-                                  "accende da solo senza aprirti la finestra in faccia.",
+        card.body.addWidget(label(t("Comodo con l'avvio automatico: il programma si "
+                                    "accende da solo senza aprirti la finestra in faccia."),
                                   "hint"))
 
+        lingua_riga = QWidget()
+        lay_lingua = QHBoxLayout(lingua_riga)
+        lay_lingua.setContentsMargins(0, 0, 0, 0)
+        self.cfg_lingua = QComboBox()
+        for codice, nome in (("auto", t("Come il sistema")),
+                             ("it", t("Italiano")), ("en", t("Inglese"))):
+            self.cfg_lingua.addItem(nome, codice)
+        self.cfg_lingua.setFixedWidth(200)
+        lay_lingua.addWidget(self.cfg_lingua)
+        lay_lingua.addStretch(1)
+        card.field(t("Lingua"), lingua_riga, t("La lingua cambia alla prossima apertura."))
+
         card.body.addSpacing(12)
-        self.cfg_gitignore = Switch("Rispetta i .gitignore dei progetti")
+        self.cfg_gitignore = Switch(t("Rispetta i .gitignore dei progetti"))
         card.body.addWidget(self.cfg_gitignore)
         card.body.addSpacing(4)
-        card.body.addWidget(label("Salta quello che git gia' ignora: node_modules, "
-                                  ".venv, build. Niente liste da mantenere a mano.",
+        card.body.addWidget(label(t("Salta quello che git gia' ignora: node_modules, "
+                                    ".venv, build. Niente liste da mantenere a mano."),
                                   "hint"))
         card.body.addSpacing(12)
         riga_ver = QWidget()
@@ -1063,35 +1086,35 @@ class Window(QMainWindow):
         self.cfg_verify = QLineEdit()
         self.cfg_verify.setFixedWidth(90)
         lay_ver.addWidget(self.cfg_verify)
-        lay_ver.addWidget(label("% dei file copiati, 0 per non verificare", "hint"), 1)
-        card.field("Verifica a campione dopo la copia", riga_ver,
-                   "Confronta l'impronta del file copiato con l'originale: le "
-                   "chiavette si guastano in silenzio.")
+        lay_ver.addWidget(label(t("% dei file copiati, 0 per non verificare"), "hint"), 1)
+        card.field(t("Verifica a campione dopo la copia"), riga_ver,
+                   t("Confronta l'impronta del file copiato con l'originale: le "
+                     "chiavette si guastano in silenzio."))
 
         self.cfg_exclude = QPlainTextEdit()
         self.cfg_exclude.setFixedHeight(120)
-        card.field("Esclusioni globali (una per riga)", self.cfg_exclude)
+        card.field(t("Esclusioni globali (una per riga)"), self.cfg_exclude)
 
         bar = QHBoxLayout()
         bar.setSpacing(9)
-        bar.addWidget(button("Salva impostazioni", "primary", self.save_cfg))
-        bar.addWidget(button("Apri cartella backup", "ghost",
+        bar.addWidget(button(t("Salva impostazioni"), "primary", self.save_cfg))
+        bar.addWidget(button(t("Apri cartella backup"), "ghost",
                              lambda: reveal(ub.dest_root_of(self.cfg))))
-        bar.addWidget(button("Apri il log", "ghost", self.open_log))
+        bar.addWidget(button(t("Apri il log"), "ghost", self.open_log))
         bar.addStretch(1)
-        bar.addWidget(button("Esporta sul disco", "ghost", self.export_settings))
-        bar.addWidget(button("Importa da file", "ghost", self.import_settings))
+        bar.addWidget(button(t("Esporta sul disco"), "ghost", self.export_settings))
+        bar.addWidget(button(t("Importa da file"), "ghost", self.import_settings))
         card.body.addSpacing(20)
         card.body.addLayout(bar)
         lay.addWidget(card)
 
-        auto = Card("Avvio automatico al login",
+        auto = Card(t("Avvio automatico al login"),
                     "Windows: attività pianificata ONLOGON, senza finestra.  "
                     "macOS: LaunchAgent caricato con launchctl.")
         row = QHBoxLayout()
         row.setSpacing(9)
-        row.addWidget(button("Installa", "normal", lambda: self.autostart(True)))
-        row.addWidget(button("Rimuovi", "ghost", lambda: self.autostart(False)))
+        row.addWidget(button(t("Installa"), "normal", lambda: self.autostart(True)))
+        row.addWidget(button(t("Rimuovi"), "ghost", lambda: self.autostart(False)))
         row.addStretch(1)
         auto.body.addLayout(row)
         lay.addWidget(auto)
@@ -1112,14 +1135,14 @@ class Window(QMainWindow):
         self.dot = QLabel("●")
         self.dot.setStyleSheet(f"color:{C['dim']};font-size:12px")
         head.addWidget(self.dot)
-        head.addWidget(label("Log", "logtitle"))
-        self.log_state = label("in attesa", "logstate")
+        head.addWidget(label(t("Log"), "logtitle"))
+        self.log_state = label(t("in attesa"), "logstate")
         head.addWidget(self.log_state)
         head.addStretch(1)
-        self.btn_log = button("Nascondi", "ghost", self.toggle_log)
+        self.btn_log = button(t("Nascondi"), "ghost", self.toggle_log)
         self.btn_log.setProperty("kind", "tiny")
         head.addWidget(self.btn_log)
-        head.addWidget(button("Pulisci", "ghost", lambda: self.logview.clear()))
+        head.addWidget(button(t("Pulisci"), "ghost", lambda: self.logview.clear()))
         lay.addLayout(head)
 
         self.logview = QPlainTextEdit()
@@ -1212,10 +1235,10 @@ class Window(QMainWindow):
     def show_page(self, index: int):
         self.pages.setCurrentIndex(index)
         self.nav_group.button(index).setChecked(True)
-        titles = [("Chiavette", "cosa copiare da ogni chiavetta"),
-                  ("Questo PC", "cosa scambiare tra PC e chiavetta"),
-                  ("Storico", "come sono andati gli ultimi giri"),
-                  ("Impostazioni", "destinazione, notifiche, avvio automatico")]
+        titles = [(t("Chiavette"), t("cosa copiare da ogni chiavetta")),
+                  (t("Questo PC"), t("cosa scambiare tra PC e chiavetta")),
+                  (t("Storico"), t("come sono andati gli ultimi giri")),
+                  (t("Impostazioni"), t("destinazione, notifiche, avvio automatico"))]
         self.h1.setText(titles[index][0])
         self.h2.setText(titles[index][1])
         if index == 2:
@@ -1252,8 +1275,8 @@ class Window(QMainWindow):
             mark.setAlignment(Qt.AlignCenter)
             lay.addWidget(mark)
             lay.addSpacing(4)
-            for text, name in (("Nessun volume collegato", "emptyTitle"),
-                               ("Infila una chiavetta: compare qui appena il sistema la monta.",
+            for text, name in ((t("Nessun volume collegato"), "emptyTitle"),
+                               (t("Infila una chiavetta: compare qui appena il sistema la monta."),
                                 "hint")):
                 widget = label(text, name)
                 widget.setAlignment(Qt.AlignCenter)
@@ -1294,7 +1317,7 @@ class Window(QMainWindow):
         fermi.sort(key=lambda x: -x[1])
         pezzi = [f"{nome} da {int(giorni)} giorni" for nome, giorni in fermi[:3]]
         self.avviso.setText("Non colleghi da un po': " + ", ".join(pezzi)
-                            + ".  Il backup di quei dischi e' fermo a quella data.")
+                            + t(".  Il backup di quei dischi e' fermo a quella data."))
         self.avviso.setVisible(True)
 
     def select_volume(self, path: str):
@@ -1321,13 +1344,13 @@ class Window(QMainWindow):
 
     def pick_pc_folder(self) -> str | None:
         chosen = QFileDialog.getExistingDirectory(
-            self, "Cartella del PC da spedire sulla chiavetta", str(Path.home()))
+            self, t("Cartella del PC da spedire sulla chiavetta"), str(Path.home()))
         return chosen or None
 
     def pick_pull_dest(self):
         start = self.pull_dest.text().strip() or str(ub.dest_root_of(self.cfg))
         chosen = QFileDialog.getExistingDirectory(
-            self, "Dove far atterrare la roba presa dalla chiavetta", start)
+            self, t("Dove far atterrare la roba presa dalla chiavetta"), start)
         if chosen:
             self.pull_dest.setText(chosen)
 
@@ -1371,7 +1394,7 @@ class Window(QMainWindow):
         except OSError as exc:
             self.toast(f"Scrittura fallita: {exc}", "err")
             return False
-        ub.log(f"[salvato] {target}")
+        ub.log(tf("saved", path=target))
         self.toast("Salvato sulla chiavetta", "ok")
         self.refresh_volumes()
         return True
@@ -1383,7 +1406,7 @@ class Window(QMainWindow):
         if not target.is_file():
             return
         answer = QMessageBox.question(
-            self, "Conferma",
+            self, t("Conferma"),
             f"Eliminare {target}?\n\nLa chiavetta non verrà più copiata in automatico.\n"
             "I backup già fatti sul PC restano dove sono.")
         if answer != QMessageBox.Yes:
@@ -1393,7 +1416,7 @@ class Window(QMainWindow):
         except OSError as exc:
             self.toast(str(exc), "err")
             return
-        ub.log(f"[eliminato] {target}")
+        ub.log(tf("deleted", path=target))
         self.load_stick_plan()
         self.refresh_volumes()
 
@@ -1434,11 +1457,11 @@ class Window(QMainWindow):
         if self._only_serials:
             quale = self._only_serials[0]
             nome = next((v["label"] for v in self.volumes
-                         if v.get("serial") == quale), "disco non collegato")
+                         if v.get("serial") == quale), t("disco non collegato"))
             self.lbl_serial.setText(f"legato a {quale}  ({nome})")
             self.lbl_serial.setStyleSheet(f"color:{C['ok']}")
         else:
-            self.lbl_serial.setText("nessun vincolo")
+            self.lbl_serial.setText(t("nessun vincolo"))
             self.lbl_serial.setStyleSheet(f"color:{C['dim']}")
 
     def load_pc_plan(self):
@@ -1510,7 +1533,7 @@ class Window(QMainWindow):
         except OSError as exc:
             self.toast(f"Scrittura fallita: {exc}", "err")
             return False
-        ub.log(f"[salvato] {target}")
+        ub.log(tf("saved", path=target))
         self.toast("Piano del PC salvato", "ok")
         self.refresh_volumes()
         return True
@@ -1519,20 +1542,20 @@ class Window(QMainWindow):
         target = ub.dest_root_of(self.cfg) / ub.MARKER_NAME
         if not target.is_file():
             return
-        if QMessageBox.question(self, "Conferma", f"Eliminare {target}?") != QMessageBox.Yes:
+        if QMessageBox.question(self, t("Conferma"), f"Eliminare {target}?") != QMessageBox.Yes:
             return
         try:
             target.unlink()
         except OSError as exc:
             self.toast(str(exc), "err")
             return
-        ub.log(f"[eliminato] {target}")
+        ub.log(tf("deleted", path=target))
         self.load_pc_plan()
         self.refresh_volumes()
 
     # ------------------------------------------------------------ impostazioni
     def pick_dest(self):
-        chosen = QFileDialog.getExistingDirectory(self, "Cartella dei backup",
+        chosen = QFileDialog.getExistingDirectory(self, t("Cartella dei backup"),
                                                   str(ub.dest_root_of(self.cfg)))
         if chosen:
             self.cfg_dest.setText(chosen)
@@ -1556,6 +1579,8 @@ class Window(QMainWindow):
         self.cfg_minimized.setChecked(bool(self.cfg.get("start_minimized", False)))
         self.cfg_gitignore.setChecked(bool(self.cfg.get("use_gitignore", False)))
         self.cfg_verify.setText(str(self.cfg.get("verify_percent", 1)))
+        indice = self.cfg_lingua.findData(str(self.cfg.get("language", "auto")))
+        self.cfg_lingua.setCurrentIndex(max(0, indice))
         self.cfg_exclude.setPlainText("\n".join(self.cfg.get("default_exclude", [])))
 
     def save_cfg(self):
@@ -1573,6 +1598,7 @@ class Window(QMainWindow):
         cfg["close_to_tray"] = self.cfg_tray.isChecked()
         cfg["start_minimized"] = self.cfg_minimized.isChecked()
         cfg["use_gitignore"] = self.cfg_gitignore.isChecked()
+        cfg["language"] = self.cfg_lingua.currentData()
         try:
             cfg["verify_percent"] = max(0.0, min(100.0, float(self.cfg_verify.text())))
         except ValueError:
@@ -1587,7 +1613,7 @@ class Window(QMainWindow):
             return
         self.cfg = ub.load_config()
         ub.setup_log(self.cfg.get("log_file"))
-        ub.log(f"[salvato] {ub.CONFIG_PATH}")
+        ub.log(tf("saved", path=ub.CONFIG_PATH))
         self.toast("Impostazioni salvate", "ok")
         self.refresh_volumes()
         self.load_pc_plan()
@@ -1608,7 +1634,7 @@ class Window(QMainWindow):
     def import_settings(self):
         inizio = self.volume["path"] if self.volume else str(Path.home())
         scelto, _ = QFileDialog.getOpenFileName(
-            self, "File di impostazioni da importare", inizio, "JSON (*.json)")
+            self, t("File di impostazioni da importare"), inizio, "JSON (*.json)")
         if not scelto:
             return
         try:
@@ -1617,12 +1643,12 @@ class Window(QMainWindow):
             self.toast(f"File non valido: {exc}", "err")
             return
         risposta = QMessageBox.question(
-            self, "Importare?",
-            "Arrivano impostazioni e piano da un'altra macchina." + chr(10) * 2
-            + "Restano com'erano: cartella dei backup, file di log e vincoli "
-            + "ai dischi." + chr(10)
-            + "I percorsi locali del piano (push) andranno adattati a mano."
-            + chr(10) * 2 + "Procedo?")
+            self, t("Importare?"),
+            t("Arrivano impostazioni e piano da un'altra macchina.") + chr(10) * 2
+            + t("Restano com'erano: cartella dei backup, file di log e vincoli ")
+            + t("ai dischi.") + chr(10)
+            + t("I percorsi locali del piano (push) andranno adattati a mano.")
+            + chr(10) * 2 + t("Procedo?"))
         if risposta != QMessageBox.Yes:
             return
         try:
@@ -1645,8 +1671,8 @@ class Window(QMainWindow):
 
     def autostart(self, install: bool):
         rc = ub.install_autostart() if install else ub.uninstall_autostart()
-        ub.log(f"[avvio automatico] {'installato' if install else 'rimosso'} (codice {rc})")
-        self.toast("Avvio automatico " + ("installato" if install else "rimosso")
+        ub.log(f"[avvio automatico] {t('installato') if install else t('rimosso')} (codice {rc})")
+        self.toast("Avvio automatico " + (t("installato") if install else t("rimosso"))
                    if rc == 0 else f"Operazione fallita (codice {rc})",
                    "ok" if rc == 0 else "err")
 
@@ -1655,7 +1681,7 @@ class Window(QMainWindow):
         if self.busy or not self.volume:
             return
         answer = QMessageBox.question(
-            self, "Backup adesso",
+            self, t("Backup adesso"),
             "Il backup usa i file già salvati.\n\nSalvare prima le modifiche aperte?",
             QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
         if answer == QMessageBox.Cancel:
@@ -1701,7 +1727,7 @@ class Window(QMainWindow):
         self.btn_stop.setVisible(False)
         self.btn_stop.setEnabled(True)
         ub.clear_stop()
-        self.log_state.setText("in ascolto" if self.watching() else "backup terminato")
+        self.log_state.setText("in ascolto" if self.watching() else t("backup terminato"))
         self.refresh_volumes()
 
     def watching(self) -> bool:
@@ -1730,8 +1756,7 @@ class Window(QMainWindow):
                 # niente controllo periodico: ci pensa Windows ad avvisare
                 self._device_filter = DeviceEvents(self.bus)
                 QApplication.instance().installNativeEventFilter(self._device_filter)
-                ub.log("[watcher] in ascolto sugli eventi di Windows "
-                       "(nessuna lettura periodica dei dischi)")
+                ub.log(tf("watch.events", sistema="Windows"))
                 self.scan_devices(first=True)
             elif sys.platform == "darwin" and Path("/Volumes").is_dir():
                 # su macOS un disco montato compare come voce in /Volumes:
@@ -1739,8 +1764,7 @@ class Window(QMainWindow):
                 self._fs_watcher = QFileSystemWatcher(["/Volumes"], self)
                 self._fs_watcher.directoryChanged.connect(
                     lambda _p: self.bus.device_changed.emit())
-                ub.log("[watcher] in ascolto su /Volumes "
-                       "(nessuna lettura periodica dei dischi)")
+                ub.log(tf("watch.events", sistema="/Volumes"))
                 self.scan_devices(first=True)
             else:
                 self.stop_event = threading.Event()
@@ -1756,11 +1780,11 @@ class Window(QMainWindow):
             if self._device_filter is not None:
                 QApplication.instance().removeNativeEventFilter(self._device_filter)
                 self._device_filter = None
-                ub.log("[watcher] fermato")
+                ub.log(tf("watch.stop"))
             if self._fs_watcher is not None:
                 self._fs_watcher.deleteLater()
                 self._fs_watcher = None
-                ub.log("[watcher] fermato")
+                ub.log(tf("watch.stop"))
             self.stop_event.set()
             self.sw_watch.setText("sorveglianza spenta")
             self.log_state.setText("in attesa")
@@ -1804,16 +1828,16 @@ class Window(QMainWindow):
         self.tray = QSystemTrayIcon(appicon.app_icon(), self)
 
         menu = QMenu()
-        self.act_open = menu.addAction("Apri USB Backup")
+        self.act_open = menu.addAction(t("Apri USB Backup"))
         self.act_open.triggered.connect(self.show_from_tray)
-        self.act_backup = menu.addAction("Backup adesso")
+        self.act_backup = menu.addAction(t("Backup adesso"))
         self.act_backup.triggered.connect(self.backup_now)
         menu.addSeparator()
-        self.act_watch = menu.addAction("Sorveglianza")
+        self.act_watch = menu.addAction(t("Sorveglianza"))
         self.act_watch.setCheckable(True)
         self.act_watch.toggled.connect(self.sw_watch.setChecked)
         menu.addSeparator()
-        act_quit = menu.addAction("Esci")
+        act_quit = menu.addAction(t("Esci"))
         act_quit.triggered.connect(self.quit_app)
 
         self.tray.setContextMenu(menu)
@@ -1838,8 +1862,8 @@ class Window(QMainWindow):
         if self.tray is None:
             return
         attiva = self.watching()
-        self.tray.setToolTip("USB Backup - sorveglianza "
-                             + ("attiva" if attiva else "spenta"))
+        self.tray.setToolTip(t("USB Backup - sorveglianza ")
+                             + (t("attiva") if attiva else t("spenta")))
         if self.act_watch.isChecked() != attiva:
             self.act_watch.blockSignals(True)
             self.act_watch.setChecked(attiva)
@@ -1881,7 +1905,7 @@ def main() -> int:
         except Exception:
             pass
     app = QApplication(sys.argv)
-    app.setApplicationName("USB Backup")
+    app.setApplicationName(t("USB Backup"))
     app.setStyleSheet(QSS)
     app.setFont(QFont(UIFONT, 10 if sys.platform == "win32" else 13))
     app.setWindowIcon(appicon.app_icon())
@@ -1892,7 +1916,7 @@ def main() -> int:
         window.show()
         dark_titlebar(window)
     else:
-        ub.log("[avvio] parto nella tray")
+        ub.log(tf("start.tray"))
     return app.exec()
 
 

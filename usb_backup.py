@@ -33,6 +33,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from i18n import set_language, t, tf  # noqa: E402
+
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 
@@ -58,6 +61,7 @@ DEFAULT_CONFIG = {
     "verify_percent": 1,
     "use_gitignore": False,
     "stale_days": 7,
+    "language": "auto",
     "run_on_start": True,
     "close_to_tray": True,
     "start_minimized": False,
@@ -101,6 +105,7 @@ def load_config() -> dict:
         except Exception as exc:  # config rotta non deve bloccare il watcher
             print(f"[warn] config.json illeggibile ({exc}), uso i default")
     _config_cache = cfg
+    set_language(str(cfg.get("language", "auto")))
     return cfg
 
 
@@ -228,7 +233,8 @@ class Progress:
         elapsed = max(0.001, time.time() - self.started)
         speed = self.copied_bytes / elapsed
         parts = [f"{self.label}  [{bar}] {frac * 100:3.0f}%",
-                 f"{human_count(self.files)}/{human_count(self.total_files)} file",
+                 tf("progress.files", fatti=human_count(self.files),
+                    totale=human_count(self.total_files)),
                  f"{human_bytes(self.seen_bytes)}/{human_bytes(self.total_bytes)}"]
         if self.copied_bytes:
             parts.append(f"{human_bytes(speed)}/s")
@@ -242,9 +248,9 @@ class Progress:
     def finish(self) -> None:
         elapsed = time.time() - self.started
         log_progress(f"{self.label}  [{'#' * self.WIDTH}] 100%   "
-                     f"{human_count(self.files)} file   "
-                     f"{human_bytes(self.copied_bytes)} copiati in {human_time(elapsed)}",
-                     force=True)
+                     + tf("progress.done", files=human_count(self.files),
+                          size=human_bytes(self.copied_bytes),
+                          tempo=human_time(elapsed)), force=True)
 
 
 def scan_tree(base: Path, excludes: list[str]) -> tuple[int, int]:
@@ -539,7 +545,7 @@ def verify_sample(coppie: list[tuple[Path, Path]], percento: float,
         return
     quanti = max(1, min(len(coppie), round(len(coppie) * percento / 100)))
     campione = random.sample(coppie, quanti)
-    log(f"  verifica a campione: {quanti} file su {len(coppie)} copiati")
+    log(tf("verify.start", quanti=quanti, totale=len(coppie)))
     sbagliati = 0
     for sorgente, copia in campione:
         if stop_requested():
@@ -547,15 +553,14 @@ def verify_sample(coppie: list[tuple[Path, Path]], percento: float,
         try:
             if file_digest(sorgente) != file_digest(copia):
                 sbagliati += 1
-                log(f"    [errore] copia diversa dall'originale: {copia}")
+                log(tf("verify.bad", file=copia))
         except OSError as exc:
             sbagliati += 1
             log(f"    [errore] verifica {copia}: {exc}")
     stats["verificati"] = stats.get("verificati", 0) + quanti - sbagliati
     if sbagliati:
         stats["errors"] += sbagliati
-        log(f"  [attenzione] {sbagliati} file su {quanti} non corrispondono: "
-            "disco o cavo da controllare")
+        log(tf("verify.summary", sbagliati=sbagliati, quanti=quanti))
 
 
 class GitIgnore:
@@ -796,9 +801,9 @@ def _esegui_copie(lavori: list[tuple[Path, Path, int]], stats: dict,
 
 def summarize(stats: dict, elapsed: float) -> str:
     mb = stats["bytes"] / (1024 * 1024)
-    return (f"copiati {stats['copied']} file ({mb:.1f} MB), "
-            f"invariati {stats['skipped']}, in {TRASH_DIR} {stats['deleted']}, "
-            f"errori {stats['errors']}, in {elapsed:.1f}s")
+    return tf("summary", copiati=stats["copied"], mb=f"{mb:.1f}",
+              invariati=stats["skipped"], cestinati=stats["deleted"],
+              errori=stats["errors"], secondi=f"{elapsed:.1f}")
 
 
 def write_receipt(base: Path, summary: str) -> None:
@@ -1020,7 +1025,7 @@ def export_settings(dove: Path, cfg: dict) -> Path:
     }
     percorso = Path(dove) / SETTINGS_FILE
     percorso.write_text(json.dumps(dati, indent=2, ensure_ascii=False), encoding="utf-8")
-    log(f"[esportato] {percorso}")
+    log(tf("exported", path=percorso))
     return percorso
 
 
@@ -1103,34 +1108,32 @@ def run_jobs(label: str, jobs: list[tuple[Path, Path]], excludes: list[str],
     cached = _load_totals(key)
     if cached:
         files, total = cached
-        log(f"  circa {human_count(files)} file, {human_bytes(total)} (stima del giro scorso)")
+        log(tf("count.estimate", files=human_count(files), size=human_bytes(total)))
     else:
-        log(f"  primo giro: conto i file di {label}...")
+        log(tf("count.first", label=label))
         files = total = 0
         for src, _dst in jobs:
             count, size = scan_tree(src, excludes)
             files += count
             total += size
-        log(f"  {human_count(files)} file, {human_bytes(total)} da confrontare")
+        log(tf("count.done", files=human_count(files), size=human_bytes(total)))
     # --- spazio: si controlla prima di muovere un byte ---
     target = jobs[0][1] if jobs else None
     guard = None
     if target is not None:
         libero = free_space(target)
         vuota = not (target.exists() and any(target.iterdir()))
-        log(f"  spazio su {Path(target).anchor or target}: "
-            f"{human_bytes(libero)} liberi, {human_bytes(total)} da sistemare")
+        log(tf("space.check", disco=Path(target).anchor or target,
+               libero=human_bytes(libero), serve=human_bytes(total)))
         if vuota and libero < total + SPACE_MARGIN:
             mancano = total + SPACE_MARGIN - libero
-            log(f"  [errore] non ci sta: mancano {human_bytes(mancano)}. "
-                "Non copio niente.")
+            log(tf("space.short", quanto=human_bytes(mancano)))
             stats["errors"] += 1
             return
         if libero < total + SPACE_MARGIN:
             # destinazione gia' popolata: la maggior parte dei file verra'
             # saltata, si prova, ma sorvegliando lo spazio a ogni copia
-            log(f"  [attenzione] liberi {human_bytes(libero)} contro "
-                f"{human_bytes(total)} totali: se non basta mi fermo strada facendo")
+            log(tf("space.tight", libero=human_bytes(libero), totale=human_bytes(total)))
         guard = SpaceGuard(target)
 
     progress = Progress(label, files, total)
@@ -1145,13 +1148,11 @@ def run_jobs(label: str, jobs: list[tuple[Path, Path]], excludes: list[str],
                         gitignore=bool(_config_cache.get("use_gitignore", False)))
         interrotto = False
     except Stopped:
-        log(f"  [fermato] interrotto su richiesta dopo {stats['copied']} file; "
-            "al prossimo giro riprende da qui")
+        log(tf("stopped", n=stats["copied"]))
         interrotto = True
     except NoSpace as exc:
-        log(f"  [errore] spazio esaurito {exc}")
-        log(f"  [errore] copiati {stats['copied']} file prima di fermarmi; "
-            "libera spazio e rilancia, riprende da dove era")
+        log(tf("space.out", dettaglio=exc))
+        log(tf("space.out.more", n=stats["copied"]))
         stats["errors"] += 1
         interrotto = True
     progress.finish()
@@ -1178,7 +1179,7 @@ def run_stick_plan(root: Path, cfg: dict, spec: dict) -> tuple[str, dict] | None
         log(f"  [attenzione] {root}/{MARKER_NAME} non elenca nessuna cartella")
         return None
 
-    log(f"[chiavetta->PC] {root} -> {target_base}")
+    log(tf("plan.stick", root=root, dest=target_base))
     started = time.time()
     stats = new_stats()
     excludes = _excludes_for(cfg, spec)
@@ -1199,7 +1200,7 @@ def run_stick_plan(root: Path, cfg: dict, spec: dict) -> tuple[str, dict] | None
     run_jobs(label, jobs, excludes, bool(spec.get("delete_extra", False)), stats)
 
     summary = summarize(stats, time.time() - started)
-    log(f"[fine chiavetta->PC] {label}: {summary}")
+    log(tf("plan.stick.end", name=label, summary=summary))
     write_receipt(target_base, summary)
     return (f"{label} (chiavetta->PC)", stats)
 
@@ -1217,7 +1218,7 @@ def run_push(root: Path, cfg: dict, plan: dict, pc: str) -> tuple[str, dict] | N
     # senza il livello intermedio col nome del PC
     if spec.get("use_pc_folder", True):
         target_base = target_base / pc
-    log(f"[PC->chiavetta] {pc} -> {target_base}")
+    log(tf("plan.push", pc=pc, dest=target_base))
     started = time.time()
     stats = new_stats()
     excludes = _excludes_for(cfg, spec)
@@ -1240,7 +1241,7 @@ def run_push(root: Path, cfg: dict, plan: dict, pc: str) -> tuple[str, dict] | N
              skip_paths=skip)
 
     summary = summarize(stats, time.time() - started)
-    log(f"[fine PC->chiavetta] {pc}: {summary}")
+    log(tf("plan.push.end", pc=pc, summary=summary))
     write_receipt(target_base, summary)
     return (f"{pc} (PC->chiavetta)", stats)
 
@@ -1257,7 +1258,7 @@ def run_pull(root: Path, cfg: dict, plan: dict, pc: str) -> tuple[str, dict] | N
     # `dest` serve solo per mandarla altrove (es. una cartella di staging).
     target_base = (Path(str(spec["dest"])).expanduser() if spec.get("dest")
                    else dest_root_of(cfg) / safe_name(volume_label(root)))
-    log(f"[chiavetta->PC (piano PC)] {root} -> {target_base}")
+    log(tf("plan.pull", root=root, dest=target_base))
     started = time.time()
     stats = new_stats()
     excludes = _excludes_for(cfg, spec)
@@ -1282,7 +1283,7 @@ def run_pull(root: Path, cfg: dict, plan: dict, pc: str) -> tuple[str, dict] | N
              bool(spec.get("delete_extra", False)), stats, skip_paths=skip)
 
     summary = summarize(stats, time.time() - started)
-    log(f"[fine chiavetta->PC (piano PC)] {pc}: {summary}")
+    log(tf("plan.pull.end", pc=pc, summary=summary))
     write_receipt(target_base, summary)
     return (f"{pc} (chiavetta->PC)", stats)
 
@@ -1616,7 +1617,7 @@ def handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
             total[key] += stats[key]
     parts = " | ".join(
         f"{name}: {s['copied']} copiati, {s['errors']} errori" for name, s in results)
-    log(f"[volume {label}] {parts}")
+    log(tf("vol.summary", label=label, parts=parts))
 
     record_history({
         "quando": datetime.now().isoformat(timespec="seconds"),
@@ -1675,11 +1676,10 @@ def scan_once(cfg: dict, known: set[str] | None = None) -> set[str]:
         # torna non deve far ripartire da capo un giro da mezz'ora.
         since = time.time() - _last_run.get(key, 0.0)
         if since < cooldown:
-            log(f"[salto] {root}: gia' elaborato {human_time(since)} fa "
-                f"(riposo di {int(cooldown / 60)} min)")
+            log(tf("vol.cooldown", root=root, quando=human_time(since), minuti=int(cooldown / 60)))
             continue
         if not wait_ready(root):
-            log(f"[salto] {root} non leggibile")
+            log(tf("vol.unreadable", root=root))
             continue
         try:
             handle_volume(root, cfg, removable)
@@ -1693,20 +1693,20 @@ def scan_once(cfg: dict, known: set[str] | None = None) -> set[str]:
         if _misses[key] >= tolerate:     # assente per piu' giri di fila: staccato davvero
             known.discard(key)
             _misses.pop(key, None)
-            log(f"[rimosso] {key}")
+            log(tf("vol.removed", root=key))
     return known
 
 
 def watch(cfg: dict, stop_event=None) -> int:
     interval = max(1, int(cfg.get("poll_seconds", 3)))
-    log(f"[watcher] avviato (poll {interval}s, dest_root {dest_root_of(cfg)})")
+    log(tf("watch.start", interval=interval, dest=dest_root_of(cfg)))
 
     presenti = list_volumes(bool(cfg.get("include_fixed_drives", True)))
     if presenti:
         elenco = ", ".join(f"{p} ({volume_label(p)})" for p, _ in presenti)
-        log(f"[watcher] gia' collegati: {elenco}")
+        log(tf("watch.present", elenco=elenco))
     else:
-        log("[watcher] nessun volume collegato, aspetto")
+        log(tf("watch.none"))
 
     # Di default si parte lavorando anche su quelli gia' collegati: aspettare
     # che l'utente stacchi e riattacchi il disco non ha senso. Il riposo per
@@ -1721,8 +1721,7 @@ def watch(cfg: dict, stop_event=None) -> int:
             known = scan_once(cfg, known)
             if heartbeat > 0 and time.time() - last_beat >= heartbeat:
                 last_beat = time.time()
-                log(f"[watcher] in ascolto, niente di nuovo "
-                    f"({len(known)} volumi sorvegliati)")
+                log(tf("watch.idle", n=len(known)))
             if stop_event is not None:
                 if stop_event.wait(interval):
                     break
@@ -1730,7 +1729,7 @@ def watch(cfg: dict, stop_event=None) -> int:
                 time.sleep(interval)
     except KeyboardInterrupt:
         pass
-    log("[watcher] fermato")
+    log(tf("watch.stop"))
     return 0
 
 
