@@ -1865,17 +1865,29 @@ def _python_exe(windowless: bool = True) -> str:
     return str(exe)
 
 
-def launch_command() -> str:
-    """Comando per far ripartire il programma al login."""
+def launch_args(gui: bool = False) -> list[str]:
+    """Programma e argomenti da far ripartire al login.
+
+    - dall'eseguibile: l'eseguibile stesso, che riapre l'app e riprende
+    - dal sorgente, chiesto dall'app: l'app, cosi' ritrovi la tray (e se
+      Smart App Control blocca l'exe non firmato, questa e' la strada)
+    - dal sorgente, da riga di comando: il watcher senza interfaccia
+    """
     if getattr(sys, "frozen", False):
-        return f'"{sys.executable}"'          # l'exe riapre l'app e riprende
-    return f'"{_python_exe()}" "{APP_DIR / "usb_backup.py"}" --watch'
+        return [sys.executable]
+    if gui:
+        return [_python_exe(), str(APP_DIR / "usb_backup_qt.py")]
+    return [_python_exe(), str(APP_DIR / "usb_backup.py"), "--watch"]
 
 
-def install_autostart() -> int:
-    script = str(APP_DIR / "usb_backup.py")
+def launch_command(gui: bool = False) -> str:
+    return " ".join(f'"{pezzo}"' if not pezzo.startswith("--") else pezzo
+                    for pezzo in launch_args(gui))
+
+
+def install_autostart(gui: bool = False) -> int:
     if IS_WIN:
-        cmd = launch_command()
+        cmd = launch_command(gui)
         res = run_hidden(
             ["schtasks", "/Create", "/TN", TASK_NAME, "/TR", cmd,
              "/SC", "ONLOGON", "/RL", "LIMITED", "/F"],
@@ -1896,9 +1908,7 @@ def install_autostart() -> int:
   <key>Label</key><string>{PLIST_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{sys.executable if getattr(sys, "frozen", False) else _python_exe(False)}</string>
-    {"" if getattr(sys, "frozen", False) else f"<string>{script}</string>"}
-    {"" if getattr(sys, "frozen", False) else "<string>--watch</string>"}
+    {"".join(f"<string>{pezzo}</string>" for pezzo in launch_args(gui))}
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

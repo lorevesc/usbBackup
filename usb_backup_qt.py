@@ -1688,7 +1688,7 @@ class Window(QMainWindow):
         self.toast("Importato: controlla i percorsi nella scheda Questo PC", "ok")
 
     def autostart(self, install: bool):
-        rc = ub.install_autostart() if install else ub.uninstall_autostart()
+        rc = ub.install_autostart(gui=True) if install else ub.uninstall_autostart()
         ub.log(f"[avvio automatico] {t('installato') if install else t('rimosso')} (codice {rc})")
         self.toast("Avvio automatico " + (t("installato") if install else t("rimosso"))
                    if rc == 0 else f"Operazione fallita (codice {rc})",

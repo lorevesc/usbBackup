@@ -236,6 +236,17 @@ dice: non puo' sostituire un file in uso.
 
 ### Firma
 
+**Su un PC con Smart App Control attivo** (Windows 11), l'eseguibile non firmato
+puo' essere bloccato con "Un criterio di controllo dell'applicazione ha bloccato
+il file". La decisione e' per singolo file: una compilazione passa, la successiva
+magari no. Finche' non c'e' una firma riconosciuta, la strada sicura e' il
+sorgente - `start_gui.cmd` - perche' li' gira `python.exe`, che e' firmato. Anche
+l'avvio automatico, attivato dall'app in quel modo, riapre l'app nella tray.
+
+Smart App Control si puo' spegnere, ma **non si riaccende** senza reinstallare
+Windows: meglio non farlo per questo.
+
+
 Un eseguibile non firmato fa comparire "Windows ha protetto il PC", e alcune
 policy aziendali lo bloccano del tutto. `build.py` firma da solo se trova un
 certificato di firma del codice:
