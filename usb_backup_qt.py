@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QButtonGroup,
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import appicon  # noqa: E402
 import usb_backup as ub  # noqa: E402
+import i18n  # noqa: E402
 from i18n import t, tf  # noqa: E402
 
 # --------------------------------------------------------------------------
@@ -111,6 +112,13 @@ QComboBox::drop-down {{ border: none; width: 24px; }}
 QComboBox QAbstractItemView {{ background: {C['card']}; border: 1px solid {C['line_hi']};
                                selection-background-color: {C['accent_dk']};
                                padding: 4px; }}
+
+/* ---------- casella (dialoghi) ---------- */
+QCheckBox {{ color: {C['text']}; spacing: 8px; }}
+QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 4px;
+                       border: 1px solid {C['line_hi']}; background: {C['input']}; }}
+QCheckBox::indicator:hover {{ border-color: {C['accent']}; }}
+QCheckBox::indicator:checked {{ background: {C['accent']}; border-color: {C['accent']}; }}
 
 /* ---------- badge ---------- */
 #badge {{ background: #1c232f; color: {C['muted']}; border-radius: 6px;
@@ -283,6 +291,9 @@ class ElidedLabel(QLabel):
         super().setText(QFontMetrics(self.font()).elidedText(
             text, self._mode, max(40, self.width())))
 
+    def text(self):  # il testo intero, non quello coi puntini
+        return self._full
+
     def resizeEvent(self, event):  # noqa: N802
         super().resizeEvent(event)
         super().setText(QFontMetrics(self.font()).elidedText(
@@ -335,7 +346,13 @@ class Card(QFrame):
             self.head = head
             outer.addLayout(head)
 
-        self.sub = label(subtitle, "cardSub")
+        if subtitle == "—":
+            # segnaposto di un percorso scritto dopo: puntini, non finestra larga
+            self.sub = ElidedLabel(subtitle)
+            self.sub.setObjectName("cardSub")
+        else:
+            self.sub = label(subtitle, "cardSub")
+            self.sub.setWordWrap(True)
         self.sub.setVisible(bool(subtitle))
         outer.addWidget(self.sub)
         outer.addSpacing(10)
@@ -351,7 +368,9 @@ class Card(QFrame):
         self.body.addWidget(widget)
         if hint_text:
             self.body.addSpacing(5)
-            self.body.addWidget(label(hint_text, "hint"))
+            suggerimento = label(hint_text, "hint")
+            suggerimento.setWordWrap(True)
+            self.body.addWidget(suggerimento)
         return widget
 
 
@@ -405,7 +424,7 @@ class FolderList(QWidget):
         lay.setContentsMargins(12, 7, 8, 7)
         lay.setSpacing(9)
 
-        shown = "(tutta la chiavetta)" if row["path"] == "." else row["path"]
+        shown = t("(tutta la chiavetta)") if row["path"] == "." else row["path"]
         src = ElidedLabel(shown)
         src.setObjectName("mono")
         lay.addWidget(src, 3)
@@ -591,6 +610,165 @@ class EventiDialog(QDialog):
         self.btn_ripristina.setEnabled(any(e.get("salvato") for e in self.eventi))
 
 
+class PrimoAvvio(QDialog):
+    """Configurazione guidata: quale disco, cosa mandare, cosa prendere."""
+
+    def __init__(self, finestra):
+        super().__init__(finestra)
+        self.finestra = finestra
+        self.setWindowTitle(t("Configurazione guidata"))
+        self.resize(820, 560)
+        self.volumi: list[dict] = []
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(22, 20, 22, 18)
+        lay.setSpacing(14)
+        self.titolo = label("", "h1")
+        self.sotto = label("", "hint")
+        self.sotto.setWordWrap(True)
+        lay.addWidget(self.titolo)
+        lay.addWidget(self.sotto)
+
+        self.pagine = QStackedWidget()
+        lay.addWidget(self.pagine, 1)
+
+        # 1 - il disco
+        p1 = QWidget()
+        l1 = QVBoxLayout(p1)
+        l1.setContentsMargins(0, 0, 0, 0)
+        self.scelta_disco = QComboBox()
+        l1.addWidget(self.scelta_disco)
+        l1.addWidget(button(t("Aggiorna"), "ghost", self.carica_volumi))
+        l1.addStretch(1)
+        self.pagine.addWidget(p1)
+
+        # 2 - cosa mandare
+        self.cartelle_push = FolderList(t("+  Aggiungi cartella del PC"),
+                                        finestra.pick_pc_folder)
+        self.pagine.addWidget(self._avvolgi(self.cartelle_push))
+
+        # 3 - cosa prendere
+        self.cartelle_pull = FolderList(t("+  Aggiungi cartella della chiavetta"),
+                                        self.scegli_sul_disco)
+        self.pagine.addWidget(self._avvolgi(self.cartelle_pull))
+
+        # 4 - riepilogo
+        self.riepilogo = label("", "mono")
+        self.riepilogo.setWordWrap(True)
+        self.pagine.addWidget(self._avvolgi(self.riepilogo))
+
+        barra = QHBoxLayout()
+        barra.addWidget(button(t("Salta"), "ghost", self.reject))
+        barra.addStretch(1)
+        self.indietro = button(t("Indietro"), "ghost", lambda: self.vai(-1))
+        self.avanti = button(t("Avanti"), "primary", lambda: self.vai(1))
+        barra.addWidget(self.indietro)
+        barra.addWidget(self.avanti)
+        lay.addLayout(barra)
+
+        self.carica_volumi()
+        self.mostra(0)
+
+    @staticmethod
+    def _avvolgi(widget):
+        contenitore = QWidget()
+        l = QVBoxLayout(contenitore)
+        l.setContentsMargins(0, 0, 0, 0)
+        l.addWidget(widget)
+        l.addStretch(1)
+        return contenitore
+
+    TESTI = [
+        ("Quale disco?", "Scegli la chiavetta o il disco esterno da usare. Il piano verra' "
+                         "legato al suo numero di serie: non partira' su nessun altro disco."),
+        ("Cosa mandare sul disco?", "Le cartelle del PC da copiare sul disco, in "
+                                    "backup/<nome del PC>. Puoi lasciarlo vuoto."),
+        ("Cosa prendere dal disco?", "Le cartelle del disco da copiare sul PC, in "
+                                     "~/Backup/<nome del disco>. Puoi lasciarlo vuoto."),
+        ("Tutto pronto", "Controlla e premi Fine. Si cambia tutto anche dopo, nella scheda "
+                         "Questo PC."),
+    ]
+
+    def carica_volumi(self):
+        self.volumi = [v for v in self.finestra.volumes]
+        self.scelta_disco.clear()
+        for v in self.volumi:
+            self.scelta_disco.addItem(f"{v['label']}   ({v['path']})")
+        if not self.volumi:
+            self.scelta_disco.addItem(t("Nessun disco collegato: collegalo e premi Aggiorna"))
+        self.aggiorna_pulsanti()
+
+    def disco(self) -> dict | None:
+        indice = self.scelta_disco.currentIndex()
+        return self.volumi[indice] if 0 <= indice < len(self.volumi) else None
+
+    def scegli_sul_disco(self) -> str | None:
+        disco = self.disco()
+        if not disco:
+            return None
+        scelta = QFileDialog.getExistingDirectory(self, t("Cartella dentro ") + disco["label"],
+                                                  disco["path"])
+        if not scelta:
+            return None
+        return relative_to_volume(scelta, Path(disco["path"]))
+
+    def mostra(self, indice: int):
+        self.pagine.setCurrentIndex(indice)
+        titolo, sotto = self.TESTI[indice]
+        self.titolo.setText(t(titolo))
+        self.sotto.setText(t(sotto))
+        if indice == 3:
+            disco = self.disco() or {}
+            righe = [t("Disco") + f": {disco.get('label', '?')}  " + t("numero di serie") +
+                     f" {disco.get('serial') or '-'}"]
+            for riga in self.cartelle_push.get_rows():
+                righe.append(t("Manda") + f":  {riga['path']}")
+            for riga in self.cartelle_pull.get_rows():
+                righe.append(t("Prendi") + f":  {riga['path']}")
+            self.riepilogo.setText("\n".join(righe))
+        self.aggiorna_pulsanti()
+
+    def aggiorna_pulsanti(self):
+        indice = self.pagine.currentIndex()
+        self.indietro.setVisible(indice > 0)
+        self.avanti.setText(t("Fine") if indice == 3 else t("Avanti"))
+        self.avanti.setEnabled(indice != 0 or bool(self.volumi))
+
+    def vai(self, passo: int):
+        indice = self.pagine.currentIndex()
+        if passo > 0 and indice == 3:
+            self.salva()
+            return
+        self.mostra(max(0, min(3, indice + passo)))
+
+    def salva(self):
+        disco = self.disco()
+        if not disco:
+            return
+        piano = dict(ub.read_pc_plan(self.finestra.cfg) or {})
+        if disco.get("serial"):
+            piano["only_serials"] = [disco["serial"]]
+        else:
+            piano["only_volumes"] = [disco["label"]]
+        push = folders_to_json(self.cartelle_push.get_rows())
+        pull = folders_to_json(self.cartelle_pull.get_rows())
+        if push:
+            piano["push"] = {"folders": push, "target_subdir": "backup", "delete_extra": False}
+        if pull:
+            piano["pull"] = {"folders": pull, "delete_extra": False}
+        destinazione = ub.dest_root_of(self.finestra.cfg) / ub.MARKER_NAME
+        destinazione.parent.mkdir(parents=True, exist_ok=True)
+        destinazione.write_text(json.dumps(piano, indent=2, ensure_ascii=False), encoding="utf-8")
+        cfg = dict(self.finestra.cfg, wizard_done=True)
+        ub.CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+        self.finestra.cfg = ub.load_config()
+        self.finestra.load_pc_plan()
+        self.finestra.refresh_volumes()
+        self.finestra.sw_watch.setChecked(True)     # senza sorveglianza il piano non parte
+        ub.log(tf("saved", path=destinazione))
+        self.accept()
+
+
 # --------------------------------------------------------------------------
 # ponte fra thread di lavoro e interfaccia
 # --------------------------------------------------------------------------
@@ -600,6 +778,7 @@ class Bus(QObject):
     backup_done = Signal()
     device_changed = Signal()
     run_finished = Signal(dict)
+    verify_done = Signal(dict)
 
 
 class DeviceEvents(QAbstractNativeEventFilter):
@@ -716,6 +895,8 @@ class Window(QMainWindow):
         self.bus.backup_done.connect(self.on_backup_done)
         self.bus.device_changed.connect(self.on_device_changed)
         self.bus.run_finished.connect(self.on_run_finished)
+        self.bus.verify_done.connect(self.on_verify_done)
+        self._esci_a_fine = False
         ub.add_log_sink(self.bus.line.emit)
         ub.add_run_sink(self.bus.run_finished.emit)
         self._errori_da_vedere = 0
@@ -918,6 +1099,10 @@ class Window(QMainWindow):
         self.btn_stop = button(t("Ferma"), "danger", self.stop_now)
         self.btn_stop.setVisible(False)
         bar.addWidget(self.btn_stop)
+        self.btn_verify = button(t("Verifica completa"), "ghost", self.verify_now)
+        self.btn_verify.setToolTip(t("Ricontrolla ogni file del backup di questo disco "
+                                     "contro l'originale. Lento: da fare ogni tanto."))
+        bar.addWidget(self.btn_verify)
         bar.addWidget(button(t("Apri chiavetta"), "ghost",
                              lambda: self.volume and reveal(Path(self.volume["path"]))))
         bar.addStretch(1)
@@ -1143,8 +1328,8 @@ class Window(QMainWindow):
         if storia:
             ultimo = storia[0]
             self.history_card.sub.setText(
-                f"{len(storia)} giri registrati - l'ultimo "
-                f"{str(ultimo.get('quando', '')).replace('T', t(' alle '))}")
+                str(len(storia)) + t(" giri registrati - l'ultimo ")
+                + str(ultimo.get('quando', '')).replace('T', t(' alle ')))
         else:
             self.history_card.sub.setText(
                 t("Ancora nessun giro: appena ne parte uno compare qui."))
@@ -1190,7 +1375,7 @@ class Window(QMainWindow):
         card.body.addLayout(cols)
 
         card.body.addSpacing(18)
-        self.cfg_fixed = Switch("Considera anche i dischi \"fissi\" non di sistema")
+        self.cfg_fixed = Switch(t('Considera anche i dischi "fissi" non di sistema'))
         card.body.addWidget(self.cfg_fixed)
         card.body.addSpacing(4)
         card.body.addWidget(label(t("Molti SSD USB su Windows si presentano come disco fisso."), "hint"))
@@ -1233,6 +1418,21 @@ class Window(QMainWindow):
         card.body.addSpacing(12)
         self.cfg_notify_err = Switch(t("Avvisami se un giro finisce con errori"))
         card.body.addWidget(self.cfg_notify_err)
+        card.body.addSpacing(12)
+        self.cfg_brake = Switch(t("Fermati se un giro sta per sovrascrivere molti file"))
+        card.body.addWidget(self.cfg_brake)
+        riga_freno = QWidget()
+        lay_freno = QHBoxLayout(riga_freno)
+        lay_freno.setContentsMargins(0, 0, 0, 0)
+        lay_freno.setSpacing(9)
+        self.cfg_brake_pct = QLineEdit()
+        self.cfg_brake_pct.setFixedWidth(90)
+        lay_freno.addWidget(self.cfg_brake_pct)
+        lay_freno.addWidget(label(t("% dei file gia' copiati. Ransomware, o un checkout su "
+                                    "un ramo vecchio: meglio chiedere che propagare."),
+                                  "hint"), 1)
+        card.body.addSpacing(6)
+        card.body.addWidget(riga_freno)
 
         card.body.addSpacing(12)
         self.cfg_gitignore = Switch(t("Rispetta i .gitignore dei progetti"))
@@ -1296,6 +1496,25 @@ class Window(QMainWindow):
         riga_c.addStretch(1)
         colleg.body.addLayout(riga_c)
         lay.addWidget(colleg)
+
+        guida = Card(t("Configurazione guidata"),
+                     t("Tre domande - quale disco, cosa mandare, cosa prendere - e il "
+                       "piano e' fatto. Utile su un PC nuovo."))
+        riga_g = QHBoxLayout()
+        riga_g.addWidget(button(t("Avvia la configurazione guidata"), "normal",
+                                self.open_wizard))
+        riga_g.addStretch(1)
+        guida.body.addLayout(riga_g)
+        lay.addWidget(guida)
+
+        via = Card(t("Disinstalla"),
+                   t("Toglie avvio automatico e collegamenti, poi chiude l'app. I backup, "
+                     "il piano del PC e le copie sui dischi non vengono toccati."))
+        riga_d = QHBoxLayout()
+        riga_d.addWidget(button(t("Disinstalla..."), "danger", self.uninstall))
+        riga_d.addStretch(1)
+        via.body.addLayout(riga_d)
+        lay.addWidget(via)
         return page
 
     # ---------------------------------------------------------------- log
@@ -1327,7 +1546,7 @@ class Window(QMainWindow):
         self.logview.setObjectName("logview")
         self.logview.setReadOnly(True)
         self.logview.setMaximumBlockCount(4000)
-        self.logview.setPlaceholderText("Nessuna attività finora.")
+        self.logview.setPlaceholderText(t("Nessuna attività finora."))
         lay.addWidget(self.logview, 1)
         return panel
 
@@ -1340,7 +1559,7 @@ class Window(QMainWindow):
                 self.btn_log.sizeHint().height() + 18
             self.log_panel.setMinimumHeight(collapsed)
             self.log_panel.setMaximumHeight(collapsed)
-            self.btn_log.setText("Mostra")
+            self.btn_log.setText(t("Mostra"))
         else:
             self.logview.setVisible(True)
             self.log_panel.setMaximumHeight(16777215)
@@ -1348,7 +1567,7 @@ class Window(QMainWindow):
             total = sum(self.splitter.sizes())
             height = getattr(self, "_log_height", 210)
             self.splitter.setSizes([max(200, total - height), height])
-            self.btn_log.setText("Nascondi")
+            self.btn_log.setText(t("Nascondi"))
 
     def append_log(self, line: str):
         # le righe di avanzamento iniziano con \r e sostituiscono la precedente,
@@ -1438,6 +1657,7 @@ class Window(QMainWindow):
         while self.vol_grid.count():
             item = self.vol_grid.takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
 
         if not self.volumes:
@@ -1517,15 +1737,15 @@ class Window(QMainWindow):
     # -------------------------------------------------- piano della chiavetta
     def pick_stick_folder(self) -> str | None:
         if not self.volume:
-            self.toast("Seleziona prima una chiavetta", "err")
+            self.toast(t("Seleziona prima una chiavetta"), "err")
             return None
         chosen = QFileDialog.getExistingDirectory(
-            self, f"Cartella dentro {self.volume['label']}", self.volume["path"])
+            self, t("Cartella dentro ") + self.volume['label'], self.volume["path"])
         if not chosen:
             return None
         rel = relative_to_volume(chosen, Path(self.volume["path"]))
         if rel is None:
-            self.toast("Quella cartella non è sulla chiavetta", "err")
+            self.toast(t("Quella cartella non è sulla chiavetta"), "err")
             return None
         return rel
 
@@ -1565,7 +1785,7 @@ class Window(QMainWindow):
             return False
         rows = self.st_folders.get_rows()
         if not rows:
-            self.toast("Aggiungi almeno una cartella", "err")
+            self.toast(t("Aggiungi almeno una cartella"), "err")
             return False
         plan = {"folders": folders_to_json(rows)}
         name = self.st_name.text().strip()
@@ -1579,10 +1799,10 @@ class Window(QMainWindow):
         try:
             target.write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
         except OSError as exc:
-            self.toast(f"Scrittura fallita: {exc}", "err")
+            self.toast(t("Scrittura fallita: ") + str(exc), "err")
             return False
         ub.log(tf("saved", path=target))
-        self.toast("Salvato sulla chiavetta", "ok")
+        self.toast(t("Salvato sulla chiavetta"), "ok")
         self.refresh_volumes()
         return True
 
@@ -1594,8 +1814,7 @@ class Window(QMainWindow):
             return
         answer = QMessageBox.question(
             self, t("Conferma"),
-            f"Eliminare {target}?\n\nLa chiavetta non verrà più copiata in automatico.\n"
-            "I backup già fatti sul PC restano dove sono.")
+            t("Eliminare ") + str(target) + t("?\n\nLa chiavetta non verrà più copiata in automatico.\nI backup già fatti sul PC restano dove sono."))
         if answer != QMessageBox.Yes:
             return
         try:
@@ -1613,28 +1832,28 @@ class Window(QMainWindow):
         sub = self.push_subdir.text().strip() or "backup"
         vol = self.volume["path"] if self.volume else "<chiavetta>"
         self.pc_chip.setText(f"PC: {pc}")
-        self.pc_card.sub.setText(f"File: {ub.dest_root_of(self.cfg) / ub.MARKER_NAME}")
-        self.push_card.sub.setText(f"Destinazione:   {Path(vol) / sub / pc}")
+        self.pc_card.sub.setText(t("File: ") + str(ub.dest_root_of(self.cfg) / ub.MARKER_NAME))
+        self.push_card.sub.setText(t("Destinazione:   ") + str(Path(vol) / sub / pc))
         landing = self.pull_dest.text().strip()
         stick_name = ub.safe_name(self.volume["label"]) if self.volume else "<chiavetta>"
         default_landing = ub.dest_root_of(self.cfg) / stick_name
         self.pull_dest.setPlaceholderText(str(default_landing))
         self.pull_card.sub.setText(
-            f"Destinazione:   {Path(landing) if landing else default_landing}")
+            t("Destinazione:   ") + str(Path(landing) if landing else default_landing))
         for card in (self.pc_card, self.push_card, self.pull_card):
             card.sub.setVisible(True)
 
     def bind_serial(self):
         if not self.volume:
-            self.toast("Seleziona prima un disco nella scheda Chiavette", "err")
+            self.toast(t("Seleziona prima un disco nella scheda Chiavette"), "err")
             return
         serial = self.volume.get("serial")
         if not serial:
-            self.toast("Questo disco non espone un numero di serie", "err")
+            self.toast(t("Questo disco non espone un numero di serie"), "err")
             return
         self._only_serials = [serial]
         self.update_serial_label()
-        self.toast(f"Piano legato a {self.volume['label']} ({serial})", "ok")
+        self.toast(t("Piano legato a ") + f"{self.volume['label']} ({serial})", "ok")
 
     def unbind_serial(self):
         self._only_serials = []
@@ -1645,7 +1864,7 @@ class Window(QMainWindow):
             quale = self._only_serials[0]
             nome = next((v["label"] for v in self.volumes
                          if v.get("serial") == quale), t("disco non collegato"))
-            self.lbl_serial.setText(f"legato a {quale}  ({nome})")
+            self.lbl_serial.setText(t("legato a ") + f"{quale}  ({nome})")
             self.lbl_serial.setStyleSheet(f"color:{C['ok']}")
         else:
             self.lbl_serial.setText(t("nessun vincolo"))
@@ -1710,7 +1929,7 @@ class Window(QMainWindow):
             plan["pull"] = pull
 
         if not push_rows and not pull_rows:
-            self.toast("Aggiungi almeno una cartella in Push o in Pull", "err")
+            self.toast(t("Aggiungi almeno una cartella in Push o in Pull"), "err")
             return False
 
         target = ub.dest_root_of(self.cfg) / ub.MARKER_NAME
@@ -1718,10 +1937,10 @@ class Window(QMainWindow):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
         except OSError as exc:
-            self.toast(f"Scrittura fallita: {exc}", "err")
+            self.toast(t("Scrittura fallita: ") + str(exc), "err")
             return False
         ub.log(tf("saved", path=target))
-        self.toast("Piano del PC salvato", "ok")
+        self.toast(t("Piano del PC salvato"), "ok")
         self.refresh_volumes()
         return True
 
@@ -1729,7 +1948,7 @@ class Window(QMainWindow):
         target = ub.dest_root_of(self.cfg) / ub.MARKER_NAME
         if not target.is_file():
             return
-        if QMessageBox.question(self, t("Conferma"), f"Eliminare {target}?") != QMessageBox.Yes:
+        if QMessageBox.question(self, t("Conferma"), t("Eliminare ") + str(target) + "?") != QMessageBox.Yes:
             return
         try:
             target.unlink()
@@ -1750,12 +1969,12 @@ class Window(QMainWindow):
     def open_log(self):
         path = self.cfg.get("log_file")
         if not path:
-            self.toast("Log su file disattivato")
+            self.toast(t("Log su file disattivato"))
             return
         reveal(Path(path).expanduser().parent)
 
     def load_cfg(self):
-        self.cfg_card.sub.setText(f"File: {ub.CONFIG_PATH}")
+        self.cfg_card.sub.setText(t("File: ") + str(ub.CONFIG_PATH))
         self.cfg_card.sub.setVisible(True)
         self.cfg_dest.setText(str(self.cfg.get("dest_root", "")))
         self.cfg_log.setText(str(self.cfg.get("log_file") or ""))
@@ -1768,6 +1987,8 @@ class Window(QMainWindow):
         self.cfg_versions.setChecked(bool(self.cfg.get("keep_versions", False)))
         self.cfg_low.setChecked(bool(self.cfg.get("low_priority", True)))
         self.cfg_notify_err.setChecked(bool(self.cfg.get("notify_errors", True)))
+        self.cfg_brake.setChecked(bool(self.cfg.get("mass_change_brake", True)))
+        self.cfg_brake_pct.setText(str(self.cfg.get("mass_change_percent", 30)))
         self.cfg_autostart.setChecked(bool(self.cfg.get("autostart", True)))
         self.cfg_verify.setText(str(self.cfg.get("verify_percent", 1)))
         indice = self.cfg_lingua.findData(str(self.cfg.get("language", "auto")))
@@ -1778,7 +1999,7 @@ class Window(QMainWindow):
         try:
             poll = max(1, int(self.cfg_poll.text().strip() or "3"))
         except ValueError:
-            self.toast("L'intervallo deve essere un numero", "err")
+            self.toast(t("L'intervallo deve essere un numero"), "err")
             return
         cfg = dict(self.cfg)
         cfg["dest_root"] = self.cfg_dest.text().strip() or str(Path.home() / "Backup")
@@ -1792,23 +2013,29 @@ class Window(QMainWindow):
         cfg["keep_versions"] = self.cfg_versions.isChecked()
         cfg["low_priority"] = self.cfg_low.isChecked()
         cfg["notify_errors"] = self.cfg_notify_err.isChecked()
+        cfg["mass_change_brake"] = self.cfg_brake.isChecked()
+        try:
+            cfg["mass_change_percent"] = max(1, min(100, int(self.cfg_brake_pct.text())))
+        except ValueError:
+            self.toast(t("La soglia del freno dev'essere un numero"), "err")
+            return
         cfg["language"] = self.cfg_lingua.currentData()
         try:
             cfg["verify_percent"] = max(0.0, min(100.0, float(self.cfg_verify.text())))
         except ValueError:
-            self.toast("La percentuale di verifica dev'essere un numero", "err")
+            self.toast(t("La percentuale di verifica dev'essere un numero"), "err")
             return
         cfg["default_exclude"] = lines_of(self.cfg_exclude.toPlainText())
         try:
             ub.CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False),
                                       encoding="utf-8")
         except OSError as exc:
-            self.toast(f"Scrittura fallita: {exc}", "err")
+            self.toast(t("Scrittura fallita: ") + str(exc), "err")
             return
         self.cfg = ub.load_config()
         ub.setup_log(self.cfg.get("log_file"))
         ub.log(tf("saved", path=ub.CONFIG_PATH))
-        self.toast("Impostazioni salvate", "ok")
+        self.toast(t("Impostazioni salvate"), "ok")
         self.refresh_volumes()
         self.load_pc_plan()
         self.load_cfg()
@@ -1816,14 +2043,14 @@ class Window(QMainWindow):
     def export_settings(self):
         """Mette impostazioni e piano sul disco selezionato, per l'altro PC."""
         if not self.volume:
-            self.toast("Seleziona prima un disco nella scheda Chiavette", "err")
+            self.toast(t("Seleziona prima un disco nella scheda Chiavette"), "err")
             return
         try:
             dove = ub.export_settings(Path(self.volume["path"]), self.cfg)
         except OSError as exc:
-            self.toast(f"Non riesco a scrivere: {exc}", "err")
+            self.toast(t("Non riesco a scrivere: ") + str(exc), "err")
             return
-        self.toast(f"Esportato in {dove.name}", "ok")
+        self.toast(t("Esportato in ") + dove.name, "ok")
 
     def import_settings(self):
         inizio = self.volume["path"] if self.volume else str(Path.home())
@@ -1834,7 +2061,7 @@ class Window(QMainWindow):
         try:
             nuova, piano = ub.import_settings(Path(scelto), self.cfg)
         except Exception as exc:
-            self.toast(f"File non valido: {exc}", "err")
+            self.toast(t("File non valido: ") + str(exc), "err")
             return
         risposta = QMessageBox.question(
             self, t("Importare?"),
@@ -1854,14 +2081,40 @@ class Window(QMainWindow):
                 bersaglio.write_text(json.dumps(piano, indent=2, ensure_ascii=False),
                                      encoding="utf-8")
         except OSError as exc:
-            self.toast(f"Scrittura fallita: {exc}", "err")
+            self.toast(t("Scrittura fallita: ") + str(exc), "err")
             return
         self.cfg = ub.load_config()
         ub.setup_log(self.cfg.get("log_file"))
         self.load_cfg()
         self.load_pc_plan()
         self.refresh_volumes()
-        self.toast("Importato: controlla i percorsi nella scheda Questo PC", "ok")
+        self.toast(t("Importato: controlla i percorsi nella scheda Questo PC"), "ok")
+
+    def uninstall(self):
+        from PySide6.QtWidgets import QCheckBox
+        domanda = QMessageBox(self)
+        domanda.setWindowTitle(t("Disinstalla"))
+        domanda.setText(t("Tolgo avvio automatico e collegamenti, poi chiudo l'app.\n\n"
+                          "I backup, il piano del PC e le copie sui dischi restano dove sono."))
+        casella = QCheckBox(t("Togli anche le impostazioni (config.json)"))
+        domanda.setCheckBox(casella)
+        domanda.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        domanda.setDefaultButton(QMessageBox.Cancel)
+        if domanda.exec() != QMessageBox.Ok:
+            return
+        cfg = dict(self.cfg, autostart=False)
+        if not casella.isChecked():
+            # resta spento: se riapri l'app non deve rimettersi da sola all'avvio
+            ub.CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False),
+                                      encoding="utf-8")
+        tolti = ub.disinstalla(togli_impostazioni=casella.isChecked())
+        QMessageBox.information(self, t("Disinstalla"),
+                                tf("uninstall.done", n=len(tolti), cartella=ub.APP_DIR))
+        self._quitting = True
+        self.close()
+
+    def open_wizard(self):
+        PrimoAvvio(self).exec()
 
     def make_shortcuts(self, luogo: str):
         fatti = ub.crea_collegamenti(luoghi=(luogo,))
@@ -1902,7 +2155,7 @@ class Window(QMainWindow):
             return
         answer = QMessageBox.question(
             self, t("Backup adesso"),
-            "Il backup usa i file già salvati.\n\nSalvare prima le modifiche aperte?",
+            t("Il backup usa i file già salvati.\n\nSalvare prima le modifiche aperte?"),
             QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
         if answer == QMessageBox.Cancel:
             return
@@ -1912,42 +2165,92 @@ class Window(QMainWindow):
             if self.push_folders.get_rows() or self.pull_folders.get_rows():
                 self.save_pc_plan()
 
-        volume = Path(self.volume["path"])
-        removable = self.volume["removable"]
+        self._avvia_giro(Path(self.volume["path"]), self.volume["removable"])
+
+    def _avvia_giro(self, volume: Path, removable: bool, dopo_freno: bool = False):
+        """Un giro su un disco, in un thread. `dopo_freno`: l'utente ha visto
+        l'avviso sulle troppe modifiche e ha detto di procedere."""
+        if self.busy:
+            return
         self.busy = True
         ub.clear_stop()
         self.btn_backup.setEnabled(False)
+        self.btn_verify.setEnabled(False)
         self.btn_stop.setVisible(True)
-        self.log_state.setText("backup in corso…")
+        self.log_state.setText(t("backup in corso…"))
 
         def job():
             try:
+                if dopo_freno:
+                    ub.salta_freno_una_volta()
                 if not ub.handle_volume(volume, self.cfg, removable):
-                    ub.log(f"[attenzione] {volume}: niente da fare - nessun backup.json "
-                           "sulla chiavetta e il piano del PC non si applica")
+                    ub.log(tf("vol.nothing", root=volume))
             except Exception as exc:
-                ub.log(f"[errore] {exc}")
+                ub.log(tf("err.backup", root=volume, err=exc))
             finally:
                 self.bus.backup_done.emit()
 
         threading.Thread(target=job, daemon=True).start()
+
+    def verify_now(self):
+        """Verifica completa del disco selezionato, in un thread."""
+        if self.busy or not self.volume:
+            return
+        volume = Path(self.volume["path"])
+        removable = self.volume["removable"]
+        nome = self.volume["label"]       # letto qui: se il disco sparisce, self.volume diventa None
+        self.busy = True
+        ub.clear_stop()
+        self.btn_backup.setEnabled(False)
+        self.btn_verify.setEnabled(False)
+        self.btn_stop.setVisible(True)
+        self.log_state.setText(t("verifica in corso…"))
+
+        def job():
+            esito: dict = {}
+            try:
+                esito = ub.verifica_completa(volume, self.cfg, removable)
+            except Exception as exc:
+                ub.log(tf("err.backup", root=volume, err=exc))
+            finally:
+                self.bus.verify_done.emit(dict(esito, volume=nome))
+                self.bus.backup_done.emit()
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def on_verify_done(self, esito: dict):
+        problemi = esito.get("eventi") or []
+        if not problemi and esito.get("verificati"):
+            self.toast(tf("verify.all.ok", n=esito["verificati"]), "ok")
+            return
+        if not problemi:
+            self.toast(t("Niente da verificare per questo disco"))
+            return
+        EventiDialog(self, t("Verifica completa") + " - " + str(esito.get("volume", "")),
+                     problemi, int(esito.get("eventi_persi", 0))).exec()
 
     def stop_now(self):
         """Chiede al giro in corso di fermarsi: finisce il file che sta
         copiando e si ferma li'."""
         ub.request_stop()
         self.btn_stop.setEnabled(False)
-        self.log_state.setText("mi fermo appena finisce il file…")
+        self.log_state.setText(t("mi fermo appena finisce il file…"))
 
     def on_backup_done(self):
         if self._scanning:
             return
         self.busy = False
         self.btn_backup.setEnabled(True)
+        self.btn_verify.setEnabled(True)
+        if self._esci_a_fine:                 # avevi chiesto di uscire a giro finito
+            self._esci_a_fine = False
+            self._quitting = True
+            self.close()
+            return
         self.btn_stop.setVisible(False)
         self.btn_stop.setEnabled(True)
         ub.clear_stop()
-        self.log_state.setText("in ascolto" if self.watching() else t("backup terminato"))
+        self.log_state.setText(t("in ascolto") if self.watching() else t("backup terminato"))
         self.refresh_volumes()
 
     def watching(self) -> bool:
@@ -1967,7 +2270,7 @@ class Window(QMainWindow):
                                       encoding="utf-8")
             self.cfg = ub.load_config()
         except OSError as exc:
-            ub.log(f"[errore] non riesco a ricordare la sorveglianza: {exc}")
+            ub.log(tf("err.watchmemory", err=exc))
 
     def toggle_watch(self, on: bool):
         self.remember_watch(on)
@@ -1992,8 +2295,8 @@ class Window(QMainWindow):
                                                 args=(self.cfg, self.stop_event),
                                                 daemon=True)
                 self.watcher.start()
-            self.sw_watch.setText("sorveglianza attiva")
-            self.log_state.setText("in ascolto")
+            self.sw_watch.setText(t("sorveglianza attiva"))
+            self.log_state.setText(t("in ascolto"))
             self.dot.setStyleSheet(f"color:{C['ok']};font-size:12px")
             self.update_tray()
         else:
@@ -2006,8 +2309,8 @@ class Window(QMainWindow):
                 self._fs_watcher = None
                 ub.log(tf("watch.stop"))
             self.stop_event.set()
-            self.sw_watch.setText("sorveglianza spenta")
-            self.log_state.setText("in attesa")
+            self.sw_watch.setText(t("sorveglianza spenta"))
+            self.log_state.setText(t("in attesa"))
             self.dot.setStyleSheet(f"color:{C['dim']};font-size:12px")
             self.update_tray()
 
@@ -2079,7 +2382,16 @@ class Window(QMainWindow):
         self.activateWindow()
 
     def on_run_finished(self, voce: dict):
-        """Un giro e' finito: se ci sono stati errori, non devono passare inosservati."""
+        """Un giro e' finito: errori, freno e disco staccato non devono passare inosservati."""
+        if voce.get("freno"):
+            self.ask_brake(voce)
+            return
+        if voce.get("disco_sparito"):
+            titolo = t("USB Backup: disco staccato")
+            testo = tf("disk.gone.notice", volume=voce.get("volume", ""))
+            if self.tray is not None:
+                self.tray.showMessage(titolo, testo, QSystemTrayIcon.Warning, 8000)
+            return
         errori = int(voce.get("errori", 0))
         if not errori:
             return
@@ -2093,6 +2405,28 @@ class Window(QMainWindow):
             self.tray.showMessage(titolo, testo, QSystemTrayIcon.Warning, 8000)
         else:
             ub.notify(titolo, testo)
+
+    def ask_brake(self, voce: dict):
+        """Troppi file stavano per essere sovrascritti: chiedi prima di procedere."""
+        freno = voce.get("freno") or {}
+        testo = tf("brake.question", volume=voce.get("volume", ""),
+                   n=freno.get("n", "?"), totale=freno.get("totale", "?"))
+        if self.tray is not None:
+            self.tray.showMessage(t("USB Backup: mi sono fermato"), testo,
+                                  QSystemTrayIcon.Warning, 10000)
+        self.show_from_tray()
+        risposta = QMessageBox.warning(
+            self, t("Troppe modifiche tutte insieme"), testo,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if risposta != QMessageBox.Yes:
+            return
+        radice = Path(str(voce.get("root", "")))
+        if not radice.exists():
+            self.toast(t("Il disco non e' piu' collegato"), "err")
+            return
+        rimovibile = next((v["removable"] for v in self.volumes
+                           if v["path"] == str(radice)), True)
+        self._avvia_giro(radice, rimovibile, dopo_freno=True)
 
     def errors_seen(self):
         """Hai aperto l'app: l'avviso ha fatto il suo lavoro."""
@@ -2120,11 +2454,28 @@ class Window(QMainWindow):
             self.act_watch.blockSignals(False)
 
     def quit_app(self):
+        if self.busy or self._scanning:
+            scelta = QMessageBox(self)
+            scelta.setWindowTitle(t("Sta copiando"))
+            scelta.setText(t("C'e' un giro in corso. Grazie alla copia atomica uscire "
+                             "adesso non rovina niente, ma il giro resta a meta'."))
+            fine = scelta.addButton(t("Esci appena finisce"), QMessageBox.AcceptRole)
+            subito = scelta.addButton(t("Esci subito"), QMessageBox.DestructiveRole)
+            scelta.addButton(t("Annulla"), QMessageBox.RejectRole)
+            scelta.exec()
+            if scelta.clickedButton() is fine:
+                self._esci_a_fine = True
+                self.hide()
+                return
+            if scelta.clickedButton() is not subito:
+                return
+            ub.request_stop()
         self._quitting = True
         self.close()
 
     def closeEvent(self, event):  # noqa: N802
-        if self.tray is not None and not self._quitting                 and self.cfg.get("close_to_tray", True):
+        if (self.tray is not None and not self._quitting
+                and self.cfg.get("close_to_tray", True)):
             event.ignore()
             self.hide()            # in silenzio, senza messaggini
             return
@@ -2183,6 +2534,42 @@ def ascolta_altre_aperture(nome: str, finestra) -> object:
     return server
 
 
+def stile_app() -> str:
+    """Il foglio di stile piu' la freccia dei menu a tendina: lo stile nativo di
+    Windows 11, con il bordo personalizzato, la freccia non la disegna piu'."""
+    import tempfile
+    from PySide6.QtGui import QImage, QPen
+    dove = Path(tempfile.gettempdir()) / "usb-backup-freccia.png"
+    try:
+        immagine = QImage(24, 24, QImage.Format_ARGB32)
+        immagine.fill(Qt.transparent)
+        pittore = QPainter(immagine)
+        pittore.setRenderHint(QPainter.Antialiasing)
+        pittore.setPen(QPen(QColor(C["muted"]), 2.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        freccia = QPainterPath()
+        freccia.moveTo(6, 9)
+        freccia.lineTo(12, 15)
+        freccia.lineTo(18, 9)
+        pittore.drawPath(freccia)
+        pittore.end()
+        if not immagine.save(str(dove)):
+            return QSS
+    except Exception:
+        return QSS
+    return QSS + ("\nQComboBox::down-arrow { image: url(%s); width: 12px; height: 12px; }\n"
+                  % dove.as_posix())
+
+
+def traduci_qt(app: QApplication) -> None:
+    """I pulsanti standard dei dialoghi (Yes, No, Cancel) vengono da Qt:
+    senza la sua traduzione restano in inglese anche con l'app in italiano."""
+    from PySide6.QtCore import QLibraryInfo, QTranslator
+    traduttore = QTranslator(app)
+    if traduttore.load("qtbase_" + i18n.get_language(),
+                       QLibraryInfo.path(QLibraryInfo.TranslationsPath)):
+        app.installTranslator(traduttore)
+
+
 def main() -> int:
     if sys.platform == "win32":
         try:  # senza questo la barra delle applicazioni mostra l'icona di Python
@@ -2192,7 +2579,7 @@ def main() -> int:
             pass
     app = QApplication(sys.argv)
     app.setApplicationName(t("USB Backup"))
-    app.setStyleSheet(QSS)
+    app.setStyleSheet(stile_app())
     app.setFont(QFont(UIFONT, 10 if sys.platform == "win32" else 13))
     app.setWindowIcon(appicon.app_icon())
     app.setQuitOnLastWindowClosed(False)   # la tray tiene vivo il programma
@@ -2200,6 +2587,7 @@ def main() -> int:
     if avvisa_istanza_aperta(nome):
         return 0                           # c'era gia': si e' mostrata lei
     window = Window()
+    traduci_qt(app)                        # Si/No/Annulla nella lingua scelta
     window._server_istanza = ascolta_altre_aperture(nome, window)
     # --tray arriva dall'avvio automatico; start_minimized vale anche a mano
     richiesto = "--tray" in sys.argv or bool(window.cfg.get("start_minimized"))
@@ -2209,6 +2597,9 @@ def main() -> int:
     if not in_tray:
         window.show()
         dark_titlebar(window)
+        # PC nuovo: nessun piano e mai fatta la guidata
+        if ub.read_pc_plan(window.cfg) is None and not window.cfg.get("wizard_done"):
+            QTimer.singleShot(400, window.open_wizard)
     else:
         ub.log(tf("start.tray"))
     return app.exec()

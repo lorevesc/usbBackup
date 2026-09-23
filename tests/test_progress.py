@@ -47,7 +47,7 @@ logfile = tmp / "log.txt"
 ub.setup_log(str(logfile))
 shutil.rmtree(dst)
 ub.run_jobs("sorgente", [(src, dst)], [], False, ub.new_stats())
-testo = logfile.read_text(encoding="utf-8")
+testo = ub.log_di_oggi().read_text(encoding="utf-8")   # il log e' giornaliero
 assert "[" not in testo.split("conto i file")[-1].split("\n")[0] or "%" not in testo
 assert "%" not in testo, "le barre sono finite nel file di log"
 print("file di log pulito:", len(testo.splitlines()), "righe")

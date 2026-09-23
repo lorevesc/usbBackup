@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""Traduzione dell'interfaccia e dei messaggi.
-
-La lingua di partenza e' l'italiano: le chiavi del vocabolario sono le frasi
-italiane cosi' come stanno nel codice. Cosi' non serve inventare sigle, e una
-frase senza traduzione resta leggibile invece di diventare `ui.btn.save.42`.
-
-    from i18n import t, tf, set_language
-
-    t("Salva impostazioni")                  -> "Save settings"
-    tf("copiati {n} file", n=12)             -> "copied 12 files"
-
-`set_language("auto")` segue la lingua del sistema.
-"""
+"""Traduzione dell'interfaccia e dei messaggi.\n\nLa lingua di partenza e' l'italiano: le chiavi del vocabolario sono le frasi\nitaliane cosi' come stanno nel codice. Cosi' non serve inventare sigle, e una\nfrase senza traduzione resta leggibile invece di diventare `ui.btn.save.42`.\n\n    from i18n import t, tf, set_language\n\n    t("Salva impostazioni")                  -> "Save settings"\n    tf("copiati {n} file", n=12)             -> "copied 12 files"\n\n`set_language("auto")` segue la lingua del sistema.\n"""
 from __future__ import annotations
 
 import locale
@@ -254,6 +242,7 @@ UI = {
     "Operazione fallita (codice ": "Operation failed (code ",
 
     # --- scelta cartelle ---
+    "(tutta la chiavetta)": "(whole drive)",
     "Cartella dentro ": "Folder inside ",
     "Cartella del PC da spedire sulla chiavetta": "PC folder to send to the drive",
     "Dove far atterrare la roba presa dalla chiavetta":
@@ -306,6 +295,79 @@ UI = {
         "Puts the files back where they were. If something is already there, it goes "
         "to __versions: nothing is lost.",
     "Chiudi": "Close",
+    # --- freno, verifica, uscita, disinstalla, configurazione guidata ---
+    "Fermati se un giro sta per sovrascrivere molti file":
+        "Stop if a run is about to overwrite many files",
+    "% dei file gia' copiati. Ransomware, o un checkout su un ramo vecchio: meglio "
+    "chiedere che propagare.":
+        "% of the files already copied. Ransomware, or a checkout of an old branch: "
+        "better to ask than to spread it.",
+    "La soglia del freno dev'essere un numero": "The brake threshold must be a number",
+    "Troppe modifiche tutte insieme": "Too many changes at once",
+    "USB Backup: mi sono fermato": "USB Backup: I stopped",
+    "USB Backup: disco staccato": "USB Backup: disk unplugged",
+    "Il disco non e' piu' collegato": "The disk is no longer connected",
+    "Verifica completa": "Full check",
+    "Ricontrolla ogni file del backup di questo disco contro l'originale. Lento: da "
+    "fare ogni tanto.":
+        "Rechecks every file of this disk's backup against the original. Slow: do it "
+        "now and then.",
+    "verifica in corso…": "checking…",
+    "Niente da verificare per questo disco": "Nothing to check for this disk",
+    "Sta copiando": "Copying in progress",
+    "C'e' un giro in corso. Grazie alla copia atomica uscire adesso non rovina niente, "
+    "ma il giro resta a meta'.":
+        "A run is in progress. Thanks to atomic copying, quitting now breaks nothing, "
+        "but the run stays half done.",
+    "Esci appena finisce": "Quit when it's done",
+    "Esci subito": "Quit now",
+    "Annulla": "Cancel",
+    "Disinstalla": "Uninstall",
+    "Disinstalla...": "Uninstall...",
+    "Toglie avvio automatico e collegamenti, poi chiude l'app. I backup, il piano del "
+    "PC e le copie sui dischi non vengono toccati.":
+        "Removes autostart and shortcuts, then closes the app. Backups, the PC plan and "
+        "the copies on disks are not touched.",
+    "Tolgo avvio automatico e collegamenti, poi chiudo l'app.\n\nI backup, il piano "
+    "del PC e le copie sui dischi restano dove sono.":
+        "I'll remove autostart and shortcuts, then close the app.\n\nBackups, the PC "
+        "plan and the copies on disks stay where they are.",
+    "Togli anche le impostazioni (config.json)": "Also remove the settings (config.json)",
+    "Configurazione guidata": "Guided setup",
+    "Tre domande - quale disco, cosa mandare, cosa prendere - e il piano e' fatto. "
+    "Utile su un PC nuovo.":
+        "Three questions - which disk, what to send, what to fetch - and the plan is "
+        "ready. Handy on a new PC.",
+    "Avvia la configurazione guidata": "Start the guided setup",
+    "Quale disco?": "Which disk?",
+    "Scegli la chiavetta o il disco esterno da usare. Il piano verra' legato al suo "
+    "numero di serie: non partira' su nessun altro disco.":
+        "Pick the stick or external disk to use. The plan will be bound to its serial "
+        "number: it won't run on any other disk.",
+    "Cosa mandare sul disco?": "What to send to the disk?",
+    "Le cartelle del PC da copiare sul disco, in backup/<nome del PC>. Puoi lasciarlo "
+    "vuoto.":
+        "The PC folders to copy to the disk, in backup/<PC name>. You can leave it empty.",
+    "Cosa prendere dal disco?": "What to fetch from the disk?",
+    "Le cartelle del disco da copiare sul PC, in ~/Backup/<nome del disco>. Puoi "
+    "lasciarlo vuoto.":
+        "The disk folders to copy to the PC, in ~/Backup/<disk name>. You can leave it "
+        "empty.",
+    "Tutto pronto": "All set",
+    "Controlla e premi Fine. Si cambia tutto anche dopo, nella scheda Questo PC.":
+        "Check and press Finish. Everything can be changed later, in the This PC tab.",
+    "Nessun disco collegato: collegalo e premi Aggiorna":
+        "No disk connected: plug it in and press Refresh",
+    "Salta": "Skip",
+    "Indietro": "Back",
+    "Avanti": "Next",
+    "Fine": "Finish",
+    "Disco": "Disk",
+    "numero di serie": "serial number",
+    "Manda": "Send",
+    "Prendi": "Fetch",
+    "verifica": "check",
+    "avvio automatico": "autostart",
     "Avvia USB Backup all'accensione del computer": "Start USB Backup when the computer starts",
     "Acceso di default. Parte direttamente nella tray, senza aprire la finestra.":
         "On by default. It starts straight into the tray, without opening the window.",
@@ -464,6 +526,43 @@ MESSAGGI = {
                      "({n} more events not recorded: the run had too many)"),
     "restore.done": ("Ripristinati {n} file.", "Restored {n} files."),
     "err.autostart": ("[errore] avvio automatico: {err}", "[error] autostart: {err}"),
+    "err.read": ("    [errore] cartella illeggibile, saltata senza toccare la copia: {path}",
+                 "    [error] unreadable folder, skipped without touching the copy: {path}"),
+    "disk.gone": ("  [errore] il disco e' stato staccato: mi fermo qui dopo {n} file. "
+                  "Ricollegalo e riprende da dove era.",
+                  "  [error] the disk was unplugged: stopping here after {n} files. "
+                  "Plug it back in and it picks up where it left off."),
+    "brake": ("  [attenzione] stavano per essere sovrascritti {n} file su {totale} in {path}: "
+              "mi fermo e ti chiedo prima di procedere",
+              "  [warning] {n} of {totale} files in {path} were about to be overwritten: "
+              "stopping to ask you first"),
+    "verify.full.start": ("[verifica completa] {n} file da ricontrollare su {root}",
+                          "[full check] {n} files to recheck on {root}"),
+    "verify.full.end": ("[fine verifica] identici {ok}, diversi {diversi}, mancanti {mancanti}, "
+                        "errori {errori}",
+                        "[check done] identical {ok}, different {diversi}, missing {mancanti}, "
+                        "errors {errori}"),
+    "verify.full.nothing": ("[verifica completa] nessun piano si applica a {root}",
+                            "[full check] no plan applies to {root}"),
+    "uninstalled": ("[disinstallato] {cosa}", "[uninstalled] {cosa}"),
+    "brake.question": ("Nel giro su {volume} stavano per essere sovrascritti {n} file su "
+                       "{totale}. Puo' essere un ransomware, o un checkout su un ramo "
+                       "vecchio. Mi sono fermato prima di toccare il backup.\n\n"
+                       "Procedo lo stesso?",
+                       "In the run on {volume}, {n} of {totale} files were about to be "
+                       "overwritten. It may be ransomware, or a checkout of an old "
+                       "branch. I stopped before touching the backup.\n\nGo ahead anyway?"),
+    "disk.gone.notice": ("{volume} e' stato staccato durante il backup. Ricollegalo per "
+                         "completarlo: riprende da dove era.",
+                         "{volume} was unplugged during the backup. Plug it back in to "
+                         "finish: it picks up where it left off."),
+    "verify.all.ok": ("Tutto identico: {n} file verificati", "All identical: {n} files checked"),
+    "uninstall.done": ("Fatto: {n} elementi tolti. Per togliere del tutto il programma "
+                       "cancella la cartella:\n{cartella}",
+                       "Done: {n} items removed. To remove the program entirely, delete "
+                       "the folder:\n{cartella}"),
+    "err.watchmemory": ("[errore] non riesco a ricordare la sorveglianza: {err}",
+                        "[error] cannot remember the watch setting: {err}"),
     "summary": ("copiati {copiati} file ({mb} MB), invariati {invariati}, "
                 "in __deleted {cestinati}, errori {errori}, in {secondi}s",
                 "copied {copiati} files ({mb} MB), unchanged {invariati}, "

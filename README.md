@@ -54,7 +54,27 @@ Quattro schede:
   Doppio clic su un giro per vedere quali file hanno dato errore, quali sono
   finiti in `__deleted` e quali versioni sono state salvate, e ripristinarli.
 - **Impostazioni** - cartella dei backup, lingua, esclusioni, verifica,
-  avvio automatico, esporta/importa la configurazione.
+  freno, avvio automatico, collegamenti, esporta/importa la configurazione,
+  configurazione guidata, disinstalla.
+
+**Configurazione guidata.** Al primo avvio, se il PC non ha ancora un piano, si
+apre da sola: quale disco, cosa mandare sul disco, cosa prendere dal disco. Il
+piano viene legato al numero di serie del disco scelto e la sorveglianza si
+accende. Si rilancia quando vuoi da *Impostazioni*.
+
+**Verifica completa.** Nella scheda Chiavette, *Verifica completa* ricalcola lo
+sha256 di *ogni* file copiato da e verso il disco selezionato e lo confronta con
+l'originale. Lento: da fare ogni tanto. Se tutto torna compare un messaggio;
+altrimenti l'elenco dei file diversi o mancanti.
+
+**Uscire durante un giro.** *Esci* con un giro in corso chiede cosa fare:
+uscire appena il giro finisce (la finestra sparisce subito, il programma
+aspetta), uscire subito (il file in copia viene scartato, la copia atomica
+lascia intatta la versione precedente) o annullare.
+
+**Disinstalla.** Toglie l'avvio automatico e i collegamenti nel menu Start e sul
+desktop, poi chiude l'app. A richiesta toglie anche `config.json`. Backup,
+piano del PC e copie sui dischi non vengono mai toccati.
 
 In fondo il log in diretta, con la barra di avanzamento; nella barra laterale
 l'interruttore della sorveglianza, che viene ricordato fra un'apertura e l'altra.
@@ -140,6 +160,27 @@ viene messo nelle versioni.
 **Ferma.** Un giro si interrompe quando vuoi: finisce il file corrente e si
 ferma. Al giro dopo riprende da li'.
 
+**Disco staccato a meta'.** Se il disco sparisce durante un giro, il giro si
+ferma con un solo messaggio ("disco staccato") invece di un errore per ogni file
+rimasto, e nella tray arriva un avviso. Una cartella che non si riesce a leggere
+viene saltata: non viene mai scambiata per vuota, quindi la sua copia non finisce
+in `__deleted`.
+
+**Freno sulle modifiche di massa** (opzione, accesa di default). Se in un giro
+sta per essere sovrascritta piu' del 30% dei file gia' copiati (e almeno 50
+file), il giro si ferma *prima* di toccare la copia e l'app chiede se procedere.
+Un ransomware che cifra tutto, o un checkout su un ramo vecchio, altrimenti
+arriverebbe dritto nel backup. Soglia in *Impostazioni*; si spegne dallo stesso
+interruttore.
+
+**Impostazioni sul disco.** A ogni giro il piano del PC e le impostazioni
+vengono salvati anche sul disco, in `.usb-backup/impostazioni-<nome PC>.json`.
+Se il PC muore, sul PC nuovo basta *Importa da file* per ripartire.
+
+**Log giornaliero.** Un file al giorno, `usb-backup-AAAAMMGG.log`, nella
+cartella del log; quelli piu' vecchi di 30 giorni vengono tolti da soli
+(`log_days`). Conta la data nel nome, non quella del file.
+
 ## Velocita'
 
 Il confronto usa `os.scandir`, che su Windows porta con se' dimensione e data
@@ -219,6 +260,10 @@ modello con tutti i valori di default e' [config.example.json](config.example.js
 | `language` | `auto` | `it`, `en`, oppure `auto` per seguire il sistema |
 | `copy_threads` | `8` | Copie in parallelo |
 | `verify_percent` | `1` | Percentuale di file ricontrollati dopo la copia; `0` la spegne |
+| `mass_change_brake` | `true` | Ferma il giro se sta per sovrascrivere troppi file e chiede |
+| `mass_change_percent` | `30` | Soglia del freno, in % dei file gia' copiati |
+| `mass_change_min` | `50` | Sotto questo numero di file il freno non scatta |
+| `save_settings_on_disk` | `true` | A ogni giro salva piano e impostazioni in `.usb-backup/` sul disco |
 | `use_gitignore` | `false` | Salta quello che i `.gitignore` dei progetti escludono |
 | `keep_versions` | `false` | Sposta in `__versions` la versione che sta per essere sovrascritta |
 | `low_priority` | `true` | Copia in secondo piano, senza rallentare il PC |
@@ -235,11 +280,13 @@ modello con tutti i valori di default e' [config.example.json](config.example.js
 | `missing_polls_before_removed` | `3` | Assenze di fila prima di considerare un disco staccato |
 | `poll_seconds` | `3` | Solo per il watcher da riga di comando |
 | `heartbeat_minutes` | `0` | Solo riga di comando: riga "sono vivo" nel log; `0` la spegne |
-| `log_file` | `~/Backup/_logs/usb-backup.log` | Log cumulativo; `null` lo spegne |
+| `log_file` | `~/Backup/_logs/usb-backup.log` | Cartella del log (un file al giorno, `usb-backup-AAAAMMGG.log`); `null` lo spegne |
+| `log_days` | `30` | Giorni di log tenuti |
 | `default_exclude` | vedi file | Esclusioni valide ovunque |
 
-L'applicazione ci scrive anche `watch_enabled` (lo stato dell'interruttore) e
-`stale_ignore` (i dischi dimenticati).
+L'applicazione ci scrive anche `watch_enabled` (lo stato dell'interruttore),
+`stale_ignore` (i dischi dimenticati) e `wizard_done` (configurazione guidata
+gia' vista).
 
 ## Sincronizzazione a due vie
 

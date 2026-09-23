@@ -31,7 +31,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -75,6 +75,11 @@ DEFAULT_CONFIG = {
     "rescan_cooldown_minutes": 15,
     "missing_polls_before_removed": 3,
     "copy_threads": 8,
+    "log_days": 30,
+    "mass_change_brake": True,
+    "mass_change_percent": 30,
+    "mass_change_min": 50,
+    "save_settings_on_disk": True,
     "keep_versions": False,
     "low_priority": True,
     "notify_errors": True,
@@ -208,7 +213,43 @@ def setup_log(path: str | None) -> None:
         _log_file = None
 
 
+_log_giorno = ""
+
+
+def log_di_oggi() -> Path | None:
+    """Il file di log del giorno: usb-backup-AAAAMMGG.log accanto a quello configurato."""
+    if _log_file is None:
+        return None
+    suffisso = _log_file.suffix or ".log"
+    return _log_file.with_name(f"{_log_file.stem}-{datetime.now():%Y%m%d}{suffisso}")
+
+
+def pulisci_log_vecchi() -> int:
+    """Toglie i log giornalieri piu' vecchi di `log_days` giorni (30 di default).
+
+    Si guarda la data scritta nel nome, non quella del file: copiare la
+    cartella da un'altra parte non deve far sembrare nuovi i log vecchi.
+    """
+    giorni = int(_config_cache.get("log_days", 30))
+    if _log_file is None or giorni <= 0:
+        return 0
+    suffisso = _log_file.suffix or ".log"
+    schema = re.compile(rf"^{re.escape(_log_file.stem)}-(\d{{8}}){re.escape(suffisso)}$")
+    limite = (datetime.now() - timedelta(days=giorni)).strftime("%Y%m%d")
+    tolti = 0
+    try:
+        for voce in _log_file.parent.iterdir():
+            trovato = schema.match(voce.name)
+            if trovato and trovato.group(1) < limite:
+                voce.unlink()
+                tolti += 1
+    except OSError:
+        pass
+    return tolti
+
+
 def log(msg: str) -> None:
+    global _log_giorno
     line = f"{datetime.now():%Y-%m-%d %H:%M:%S}  {msg}"
     print(line, flush=True)
     for sink in _log_sinks:
@@ -216,9 +257,14 @@ def log(msg: str) -> None:
             sink(line)
         except Exception:
             pass
-    if _log_file is not None:
+    destinazione = log_di_oggi()
+    if destinazione is not None:
+        oggi = destinazione.name
+        if oggi != _log_giorno:             # giorno nuovo: file nuovo, e si fa pulizia
+            _log_giorno = oggi
+            pulisci_log_vecchi()
         try:
-            with _log_file.open("a", encoding="utf-8") as fh:
+            with destinazione.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
         except Exception:
             pass
@@ -624,6 +670,35 @@ class Stopped(Exception):
     """Interrotto su richiesta: non e' un errore, e' una scelta."""
 
 
+class DiscoSparito(Exception):
+    """Il disco e' stato staccato a meta' giro: si ferma tutto, con un messaggio solo."""
+
+
+class TroppeModifiche(Exception):
+    """Il giro stava per sovrascrivere troppi file: potrebbe essere un danno."""
+
+    def __init__(self, n: int, totale: int, dove: Path):
+        super().__init__(f"{n}/{totale} in {dove}")
+        self.n, self.totale, self.dove = n, totale, dove
+
+
+_freno_sospeso = threading.Event()
+
+
+def salta_freno_una_volta() -> None:
+    """L'utente ha visto l'avviso e ha detto di procedere: vale per il prossimo giro."""
+    _freno_sospeso.set()
+
+
+def _radice_sparita(*percorsi: Path) -> bool:
+    """Uno dei due lati della copia non c'e' piu'? (disco staccato, rete caduta)"""
+    for percorso in percorsi:
+        ancora = Path(percorso).anchor or str(percorso)
+        if not os.path.exists(L(ancora)) or not os.path.exists(L(percorso)):
+            return True
+    return False
+
+
 PART_SUFFIX = ".usbpart"      # copia in corso: se resta, e' roba interrotta
 
 
@@ -788,7 +863,13 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
     # chiamata stat per file. La destinazione si legge una volta per cartella
     # invece di interrogarla file per file: su 100.000 file sono 200.000
     # chiamate di sistema in meno.
-    def voci(cartella: Path) -> dict[str, tuple[int, float, bool]]:
+    def voci(cartella: Path) -> dict[str, tuple[int, float, bool]] | None:
+        """Il contenuto di una cartella, o None se non si riesce a leggerla.
+
+        None e' diverso da vuota: se l'elenco della sorgente fallisce (disco
+        staccato, permessi) non bisogna concludere che la cartella e' vuota,
+        perche' con delete_extra si sposterebbe in __deleted tutta la copia.
+        """
         trovate: dict[str, tuple[int, float, bool]] = {}
         try:
             with os.scandir(L(cartella)) as elenco:
@@ -800,7 +881,7 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
                     except OSError:
                         continue
         except OSError:
-            pass
+            return None
         return trovate
 
     da_visitare: list[tuple[Path, Path]] = [(src, Path("."))]
@@ -813,6 +894,15 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
             ignora.carica(here, rel_posix)
 
         sorgenti = voci(here)
+        if sorgenti is None:
+            if _radice_sparita(src, dst):
+                raise DiscoSparito(str(src))
+            # cartella illeggibile: si salta, e soprattutto non si cancella
+            # niente di quello che le corrisponde nella copia
+            log(tf("err.read", path=here))
+            annota(stats, "errore", path=here, msg="read")
+            stats["errors"] += 1
+            continue
         target_dir = dst / rel
         try:
             os.makedirs(L(target_dir), exist_ok=True)
@@ -821,7 +911,7 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
             annota(stats, "errore", path=target_dir, msg=exc)
             stats["errors"] += 1
             continue
-        destinazioni = voci(target_dir)
+        destinazioni = voci(target_dir) or {}
 
         names: set[str] = set()
         for nome, (size, mtime, e_cartella) in sorted(sorgenti.items()):
@@ -849,11 +939,22 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
                 da_copiare.append((here / nome, target_dir / nome, size))
         kept[target_dir] = names
 
+    # --- freno: troppe sovrascritture tutte insieme? ---
+    # Un ransomware, o un checkout su un branch vecchio, cambiano meta' dei
+    # file in un colpo: meglio fermarsi e chiedere che propagare il danno.
+    sovrascritture = sum(1 for _, d_file, _ in da_copiare
+                         if os.path.exists(L(d_file)))
+    tracciati = stats["skipped"] + sovrascritture
+    if (_config_cache.get("mass_change_brake", True) and not _freno_sospeso.is_set()
+            and sovrascritture >= int(_config_cache.get("mass_change_min", 50))
+            and sovrascritture * 100 >= tracciati * int(_config_cache.get("mass_change_percent", 30))):
+        raise TroppeModifiche(sovrascritture, tracciati, dst)
+
     # --- 2. copie vere, in parallelo se richiesto ---
     if da_copiare:
         versioni = dst if _config_cache.get("keep_versions", False) else None
         fatte = _esegui_copie(da_copiare, stats, progress, guard, threads,
-                              versioni_base=versioni)
+                              versioni_base=versioni, radici=(src, dst))
         if copiati is not None:
             copiati.extend(fatte)
     if stop_requested():
@@ -883,7 +984,8 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
 def _esegui_copie(lavori: list[tuple[Path, Path, int]], stats: dict,
                   progress: "Progress | None", guard: "SpaceGuard | None",
                   threads: int,
-                  versioni_base: Path | None = None) -> list[tuple[Path, Path]]:
+                  versioni_base: Path | None = None,
+                  radici: tuple[Path, ...] = ()) -> list[tuple[Path, Path]]:
     """Copia la lista di file, con piu' thread se conviene.
 
     Su tanti file piccoli il tempo se ne va in apertura e chiusura, non in
@@ -893,6 +995,7 @@ def _esegui_copie(lavori: list[tuple[Path, Path, int]], stats: dict,
     lock = threading.Lock()
     fermati = threading.Event()
     senza_spazio: list[NoSpace] = []
+    sparito: list[DiscoSparito] = []
 
     riuscite: list[tuple[Path, Path]] = []
 
@@ -919,6 +1022,12 @@ def _esegui_copie(lavori: list[tuple[Path, Path, int]], stats: dict,
             with lock:
                 if guard:
                     guard.release(size)      # non si e' scritto niente: lo restituisco
+                if radici and _radice_sparita(*radici):
+                    # disco staccato: un messaggio solo, non uno per file
+                    if not sparito:
+                        sparito.append(DiscoSparito(str(exc)))
+                    fermati.set()
+                    return
                 log(tf("err.copy", path=s_file, err=exc))
                 annota(stats, "errore", path=s_file, msg=exc)
                 stats["errors"] += 1
@@ -944,6 +1053,8 @@ def _esegui_copie(lavori: list[tuple[Path, Path, int]], stats: dict,
         with ThreadPoolExecutor(max_workers=threads) as pool:
             list(pool.map(uno, lavori))
 
+    if sparito:
+        raise sparito[0]
     if senza_spazio:
         raise senza_spazio[0]
     return riuscite
@@ -1179,6 +1290,32 @@ def export_settings(dove: Path, cfg: dict) -> Path:
     return percorso
 
 
+IMPOSTAZIONI_SUL_DISCO = ".usb-backup"
+
+
+def salva_impostazioni_sul_disco(root: Path, cfg: dict) -> Path | None:
+    """Una copia di impostazioni e piano sul disco, a ogni giro.
+
+    Se il PC si rompe, sul disco c'e' il backup ma anche il piano che diceva
+    cosa copiare e dove: su un PC nuovo basta importarlo. Un file per PC.
+    """
+    try:
+        cartella = Path(root) / IMPOSTAZIONI_SUL_DISCO
+        os.makedirs(L(cartella), exist_ok=True)
+        piano = read_pc_plan(cfg) or {}
+        dati = {
+            "creato": datetime.now().isoformat(timespec="seconds"),
+            "da_pc": machine_name(piano),
+            "config": {k: v for k, v in cfg.items() if k not in CHIAVI_LOCALI},
+            "piano": piano,
+        }
+        percorso = cartella / f"impostazioni-{machine_name(piano)}.json"
+        percorso.write_text(json.dumps(dati, indent=2, ensure_ascii=False), encoding="utf-8")
+        return percorso
+    except OSError:
+        return None                         # disco in sola lettura: pazienza
+
+
 def import_settings(percorso: Path, cfg: dict) -> tuple[dict, dict]:
     """Legge un file esportato. Ritorna (config aggiornata, piano).
 
@@ -1352,6 +1489,17 @@ def run_jobs(label: str, jobs: list[tuple[Path, Path]], excludes: list[str],
         interrotto = False
     except Stopped:
         log(tf("stopped", n=stats["copied"]))
+        interrotto = True
+    except DiscoSparito:
+        log(tf("disk.gone", n=stats["copied"]))
+        annota(stats, "errore", path=label, msg="disk.gone")
+        stats["errors"] += 1
+        stats["disco_sparito"] = True
+        interrotto = True
+    except TroppeModifiche as freno:
+        log(tf("brake", n=freno.n, totale=freno.totale, path=freno.dove))
+        annota(stats, "freno", path=freno.dove, n=freno.n, totale=freno.totale)
+        stats["freno"] = {"n": freno.n, "totale": freno.totale, "dove": str(freno.dove)}
         interrotto = True
     except NoSpace as exc:
         log(tf("space.out", dettaglio=exc))
@@ -1807,6 +1955,7 @@ def handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
         return _handle_volume(root, cfg, removable)
     finally:
         priorita_bassa(False)
+        _freno_sospeso.clear()              # il permesso valeva per un giro solo
 
 
 def _handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
@@ -1824,7 +1973,7 @@ def _handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
     if plan and volume_matches(plan, root, label, removable) and not stop_requested():
         pc = machine_name(plan)
         for runner in (run_sync, run_pull, run_push):
-            if stop_requested():
+            if stop_requested() or not os.path.exists(L(root)):
                 break
             try:
                 res = runner(root, cfg, plan, pc)
@@ -1850,13 +1999,22 @@ def _handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
     eventi: list[dict] = []
     persi = 0
     versioni = 0
+    freno = None
+    sparito = False
     for _, singolo in results:
         eventi.extend(singolo.get("eventi", []))
         persi += int(singolo.get("eventi_persi", 0))
         versioni += int(singolo.get("versioned", 0))
+        freno = freno or singolo.get("freno")
+        sparito = sparito or bool(singolo.get("disco_sparito"))
+    if not sparito and cfg.get("save_settings_on_disk", True):
+        salva_impostazioni_sul_disco(root, cfg)
     voce = {
         "quando": datetime.now().isoformat(timespec="seconds"),
         "volume": label,
+        "root": str(root),
+        "freno": freno,
+        "disco_sparito": sparito,
         "serial": volume_serial(root),
         "piani": [name for name, _ in results],
         "copiati": total["copied"],
@@ -2063,6 +2221,132 @@ def ripristina(salvato: Path, originale: Path | None = None) -> Path:
     shutil.move(L(salvato), L(bersaglio))
     log(tf("restored", path=bersaglio))
     return bersaglio
+
+
+# --------------------------------------------------------------------------
+# verifica completa
+# --------------------------------------------------------------------------
+
+def coppie_del_volume(root: Path, cfg: dict, removable: bool = True) -> list[tuple[str, Path, Path, list[str]]]:
+    """Le coppie (sorgente, copia) che i piani producono per questo disco.
+
+    Stessa logica dei giri veri: serve alla verifica completa per sapere cosa
+    confrontare con cosa. La sincronizzazione a due vie resta fuori: li' non
+    c'e' un originale e una copia, ma due lati alla pari.
+    """
+    coppie: list[tuple[str, Path, Path, list[str]]] = []
+    root = Path(root)
+
+    spec = read_stick_plan(root)
+    if spec:
+        nome = safe_name(str(spec.get("name") or volume_label(root)))
+        base = Path(str(spec.get("dest_root") or cfg["dest_root"])).expanduser() / nome
+        for rel, alias in resolve_entries(spec, absolute=False):
+            coppie.append((nome, root / rel if rel else root,
+                           base / alias if alias else base, _excludes_for(cfg, spec)))
+
+    piano = read_pc_plan(cfg)
+    if piano and volume_matches(piano, root, volume_label(root), removable):
+        pc = machine_name(piano)
+        pull = piano.get("pull") or {}
+        if pull.get("folders"):
+            base = (Path(str(pull["dest"])).expanduser() if pull.get("dest")
+                    else dest_root_of(cfg) / safe_name(volume_label(root)))
+            for rel, alias in resolve_entries(pull, absolute=False):
+                coppie.append(("pull", root / rel if rel else root,
+                               base / alias if alias else base, _excludes_for(cfg, pull)))
+        push = piano.get("push") or {}
+        if push.get("folders"):
+            sotto = str(push.get("target_subdir", "backup")).strip("/\\")
+            base = (root / sotto) if sotto else root
+            if push.get("use_pc_folder", True):
+                base = base / pc
+            for sorgente, alias in resolve_entries(push, absolute=True):
+                coppie.append(("push", Path(sorgente).expanduser(),
+                               base / alias if alias else base, _excludes_for(cfg, push)))
+    return coppie
+
+
+def verifica_completa(root: Path, cfg: dict, removable: bool = True) -> dict:
+    """Ricontrolla *tutto* il backup di un disco contro gli originali.
+
+    La verifica a campione guarda l'1% di quello che copia; questa guarda ogni
+    file, con l'impronta sha256. Lenta, da fare ogni tanto - prima di fidarsi
+    di un disco vecchio. Non modifica niente: segnala e basta.
+    """
+    stats = new_stats()
+    stats.update({"verificati": 0, "diversi": 0, "mancanti": 0})
+    coppie = coppie_del_volume(root, cfg, removable)
+    if not coppie:
+        log(tf("verify.full.nothing", root=root))
+        return stats
+
+    elenco: list[tuple[Path, Path, int]] = []
+    for _nome, sorgente, copia, esclusi in coppie:
+        for rel, (dimensione, _data) in _index(sorgente, esclusi).items():
+            elenco.append((sorgente / rel, copia / rel, dimensione))
+    progresso = Progress(t("verifica"), len(elenco), sum(d for *_x, d in elenco))
+    log(tf("verify.full.start", n=len(elenco), root=root))
+    priorita_bassa(True)
+    try:
+        for originale, copia, dimensione in elenco:
+            if stop_requested():
+                log(tf("stopped", n=stats["verificati"]))
+                break
+            try:
+                if not os.path.exists(L(copia)):
+                    stats["mancanti"] += 1
+                    annota(stats, "errore", path=copia, msg="missing")
+                elif (os.stat(L(copia)).st_size != dimensione
+                      or file_digest(originale) != file_digest(copia)):
+                    stats["diversi"] += 1
+                    annota(stats, "errore", path=copia, msg="verify")
+                else:
+                    stats["verificati"] += 1
+            except OSError as exc:
+                if _radice_sparita(Path(root)):
+                    log(tf("disk.gone", n=stats["verificati"]))
+                    break
+                stats["errors"] += 1
+                annota(stats, "errore", path=copia, msg=exc)
+            progresso.advance(dimensione, copied=True)
+    finally:
+        priorita_bassa(False)
+    progresso.finish()
+    log(tf("verify.full.end", ok=stats["verificati"], diversi=stats["diversi"],
+           mancanti=stats["mancanti"], errori=stats["errors"]))
+    return stats
+
+
+# --------------------------------------------------------------------------
+# disinstallazione
+# --------------------------------------------------------------------------
+
+def disinstalla(togli_impostazioni: bool = False) -> list[str]:
+    """Toglie quello che il programma ha sparso nel sistema.
+
+    Avvio automatico e collegamenti; a scelta anche config.json. I backup, il
+    piano del PC e le copie sui dischi non si toccano mai: sono i tuoi dati.
+    """
+    fatti: list[str] = []
+    if uninstall_autostart() == 0:
+        fatti.append(t("avvio automatico"))
+    if IS_WIN:
+        script = (
+            "foreach ($d in @([Environment]::GetFolderPath('Programs'), "
+            "                 [Environment]::GetFolderPath('Desktop'))) { "
+            "  $p = Join-Path $d 'USB Backup.lnk'; "
+            "  if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p; $p } }"
+        )
+        esito = run_hidden(["powershell", "-NoProfile", "-Command", script],
+                           capture_output=True, text=True)
+        fatti += [riga.strip() for riga in (esito.stdout or "").splitlines() if riga.strip()]
+    if togli_impostazioni and CONFIG_PATH.exists():
+        CONFIG_PATH.unlink()
+        fatti.append(str(CONFIG_PATH))
+    for cosa in fatti:
+        log(tf("uninstalled", cosa=cosa))
+    return fatti
 
 
 # --------------------------------------------------------------------------
