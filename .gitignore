@@ -14,3 +14,6 @@ assets/preview.png
 _logs/
 scan-totals.json
 history.json
+
+# impostazioni di questa macchina: le scrive l'app, non vanno condivise
+config.json

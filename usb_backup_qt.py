@@ -747,13 +747,22 @@ class Window(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(16)
 
+        self.avviso_box = QFrame()
+        self.avviso_box.setStyleSheet("QFrame { background:#2a2417; border:1px solid #4a3f24;"
+                                      " border-radius:10px; }")
+        riga_avviso = QHBoxLayout(self.avviso_box)
+        riga_avviso.setContentsMargins(14, 9, 9, 9)
+        riga_avviso.setSpacing(12)
         self.avviso = label("", "hint")
         self.avviso.setWordWrap(True)
-        self.avviso.setStyleSheet(f"color:{C['warn']}; background:#2a2417; "
-                                  "border:1px solid #4a3f24; border-radius:10px; "
-                                  "padding:11px 14px;")
-        self.avviso.setVisible(False)
-        lay.addWidget(self.avviso)
+        self.avviso.setStyleSheet(f"color:{C['warn']}; background:transparent; border:none;")
+        riga_avviso.addWidget(self.avviso, 1)
+        dimentica = button(t("Dimentica"), "ghost", self.forget_stale)
+        dimentica.setToolTip(t("Non segnalare piu' questi dischi. Se li ricolleghi, tornano."))
+        riga_avviso.addWidget(dimentica)
+        self.avviso_box.setVisible(False)
+        self._fermi: list[dict] = []
+        lay.addWidget(self.avviso_box)
 
         vols = Card(t("Volumi collegati"), t("Seleziona una chiavetta per configurarla."))
         vols.head.addWidget(button(t("Aggiorna"), "ghost", self.refresh_volumes))
@@ -1283,6 +1292,7 @@ class Window(QMainWindow):
                 lay.addWidget(widget)
             self.vol_grid.addWidget(box, 0, 0, 1, 3)
             self.update_pc_dest()
+            self.check_stale()      # a maggior ragione quando non c'e' niente collegato
             return
 
         known = [v["path"] for v in self.volumes]
@@ -1306,19 +1316,27 @@ class Window(QMainWindow):
         """Avvisa se un disco visto in passato non viene collegato da troppo."""
         soglia = float(self.cfg.get("stale_days", 7))
         if soglia <= 0:
-            self.avviso.setVisible(False)
+            self.avviso_box.setVisible(False)
             return
-        collegati = {v["label"] for v in self.volumes}
-        fermi = [(nome, giorni) for nome, giorni in ub.giorni_da_ultimo_backup().items()
-                 if giorni >= soglia and nome not in collegati]
-        if not fermi:
-            self.avviso.setVisible(False)
+        collegati = set()
+        for v in self.volumes:
+            collegati.add(ub.chiave_disco(v.get("serial", ""), v["label"]))
+            collegati.add(ub.chiave_disco("", v["label"]))
+        self._fermi = ub.dischi_fermi(soglia, collegati, self.cfg)
+        if not self._fermi:
+            self.avviso_box.setVisible(False)
             return
-        fermi.sort(key=lambda x: -x[1])
-        pezzi = [f"{nome} da {int(giorni)} giorni" for nome, giorni in fermi[:3]]
-        self.avviso.setText("Non colleghi da un po': " + ", ".join(pezzi)
+        pezzi = [tf("stale.item", nome=d["nome"], giorni=int(d["giorni"]))
+                 for d in self._fermi[:3]]
+        self.avviso.setText(t("Non colleghi da un po': ") + ", ".join(pezzi)
                             + t(".  Il backup di quei dischi e' fermo a quella data."))
-        self.avviso.setVisible(True)
+        self.avviso_box.setVisible(True)
+
+    def forget_stale(self):
+        if not self._fermi:
+            return
+        self.cfg = ub.dimentica_dischi([d["chiave"] for d in self._fermi], self.cfg)
+        self.check_stale()
 
     def select_volume(self, path: str):
         if self.volume and self.volume["path"] == path:
