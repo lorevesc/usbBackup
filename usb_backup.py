@@ -22,6 +22,7 @@ import fnmatch
 import hashlib
 import json
 import random
+import re
 import os
 import shutil
 import socket
@@ -74,6 +75,9 @@ DEFAULT_CONFIG = {
     "rescan_cooldown_minutes": 15,
     "missing_polls_before_removed": 3,
     "copy_threads": 8,
+    "keep_versions": False,
+    "low_priority": True,
+    "notify_errors": True,
     "dst_tolerance": True,
     "verify_percent": 1,
     "use_gitignore": False,
@@ -95,6 +99,11 @@ INVALID_NAME_CHARS = '<>:"/\\|?*'
 # Niente viene mai cancellato davvero: quello che sparisce da un lato finisce
 # qui, con la stessa struttura di cartelle, pronto da recuperare a mano.
 TRASH_DIR = "__deleted"
+
+# Quando un file viene sostituito da una versione nuova, quella vecchia puo'
+# essere messa da parte qui ("keep_versions"): senza, un file rovinato sul PC
+# - svuotato, corrotto, cifrato - al giro dopo rovinerebbe anche il backup.
+VERSIONS_DIR = "__versions"
 
 
 _B = chr(92)                                   # la barra rovesciata
@@ -118,6 +127,27 @@ def L(percorso) -> str:
     if testo.startswith(_B + _B):                   # cartella di rete
         return _PREFISSO_UNC + testo[2:]
     return _PREFISSO_LUNGO + testo
+
+
+def to_versions(base: Path, rel: str) -> Path:
+    """Sposta `base/rel` in `base/__versions/rel`, con data e ora nel nome.
+
+    A differenza del cestino le versioni si accumulano: ognuna ha il suo
+    orario, e nessuna sovrascrive la precedente.
+    """
+    source = base / rel
+    relativo = Path(rel)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = (base / VERSIONS_DIR / relativo.parent
+              / f"{relativo.stem}.{stamp}{relativo.suffix}")
+    progressivo = 1
+    while os.path.exists(L(target)):          # due versioni nello stesso secondo
+        progressivo += 1
+        target = (base / VERSIONS_DIR / relativo.parent
+                  / f"{relativo.stem}.{stamp}-{progressivo}{relativo.suffix}")
+    os.makedirs(L(target.parent), exist_ok=True)
+    shutil.move(L(source), L(target))
+    return target
 
 
 def to_trash(base: Path, rel: str) -> Path:
@@ -528,6 +558,51 @@ def needs_copy(src: Path, dst: Path) -> bool:
     return not stesse_date(s.st_mtime, d.st_mtime)
 
 
+EVENTI_MAX = 200     # oltre, un giro disastroso gonfierebbe lo storico
+
+
+def annota(stats: dict, tipo: str, **dati) -> None:
+    """Ricorda cosa e' successo in un giro, per vederlo poi nello storico."""
+    elenco = stats.setdefault("eventi", [])
+    if len(elenco) < EVENTI_MAX:
+        elenco.append({"tipo": tipo, **{k: str(v) for k, v in dati.items()}})
+    else:
+        stats["eventi_persi"] = stats.get("eventi_persi", 0) + 1
+
+
+def priorita_bassa(attiva: bool = True) -> None:
+    """Mette il thread corrente in secondo piano per disco e memoria.
+
+    Copia lo stesso, ma lascia la precedenza a quello che stai facendo:
+    un giro da decine di GB non si sente piu' mentre lavori. Riguarda solo
+    il thread che copia, non l'interfaccia.
+    """
+    if not _config_cache.get("low_priority", True):
+        return
+    try:
+        if IS_WIN:
+            k32 = ctypes.windll.kernel32
+            k32.GetCurrentThread.restype = ctypes.c_void_p
+            k32.SetThreadPriority.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            # THREAD_MODE_BACKGROUND_BEGIN / _END
+            k32.SetThreadPriority(k32.GetCurrentThread(),
+                                  0x00010000 if attiva else 0x00020000)
+        elif IS_MAC:
+            libc = ctypes.CDLL("libc.dylib")
+            # setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_THREAD, THROTTLE / DEFAULT)
+            libc.setiopolicy_np(0, 1, 3 if attiva else 0)
+    except Exception:
+        pass
+
+
+_run_sinks: list = []
+
+
+def add_run_sink(fn) -> None:
+    """Registra chi vuole sapere com'e' andato ogni giro (l'app, per gli avvisi)."""
+    _run_sinks.append(fn)
+
+
 _stop = threading.Event()
 
 
@@ -551,22 +626,32 @@ class Stopped(Exception):
 PART_SUFFIX = ".usbpart"      # copia in corso: se resta, e' roba interrotta
 
 
-def copy_atomic(src: Path, dst: Path) -> None:
+def copy_atomic(src: Path, dst: Path, versioni_base: Path | None = None) -> Path | None:
     """Copia su un file di appoggio e poi rinomina.
 
     Se si stacca la chiavetta a meta' copia resta solo il file `.usbpart`,
     che al giro dopo viene buttato: senza questo, il file di destinazione
     resterebbe troncato ma con data e dimensione da file nuovo, quindi
     nessuno lo ricopierebbe mai piu'.
+
+    Con `versioni_base` la versione che sta per essere sostituita viene
+    messa da parte in __versions. Ritorna dove e' finita, o None.
     """
     tmp = dst.with_name(dst.name + PART_SUFFIX)
+    salvata = None
     try:
-        shutil.copy2(L(src), L(tmp))
+        shutil.copy2(L(src), L(tmp))          # prima la copia nuova, intera
+        if versioni_base is not None and os.path.exists(L(dst)):
+            salvata = to_versions(versioni_base, dst.relative_to(versioni_base).as_posix())
         os.replace(L(tmp), L(dst))
+        return salvata
     except BaseException:
         try:
             if os.path.exists(L(tmp)):
                 os.unlink(L(tmp))
+            # se la vecchia versione era gia' stata spostata, torna al suo posto
+            if salvata is not None and not os.path.exists(L(dst)):
+                shutil.move(L(salvata), L(dst))
         except OSError:
             pass
         raise
@@ -602,6 +687,7 @@ def verify_sample(coppie: list[tuple[Path, Path]], percento: float,
             if file_digest(sorgente) != file_digest(copia):
                 sbagliati += 1
                 log(tf("verify.bad", file=copia))
+                annota(stats, "errore", path=copia, msg="verify")
         except OSError as exc:
             sbagliati += 1
             log(tf("err.verify", path=copia, err=exc))
@@ -731,6 +817,7 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
             os.makedirs(L(target_dir), exist_ok=True)
         except OSError as exc:
             log(tf("err.mkdir", path=target_dir, err=exc))
+            annota(stats, "errore", path=target_dir, msg=exc)
             stats["errors"] += 1
             continue
         destinazioni = voci(target_dir)
@@ -763,7 +850,9 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
 
     # --- 2. copie vere, in parallelo se richiesto ---
     if da_copiare:
-        fatte = _esegui_copie(da_copiare, stats, progress, guard, threads)
+        versioni = dst if _config_cache.get("keep_versions", False) else None
+        fatte = _esegui_copie(da_copiare, stats, progress, guard, threads,
+                              versioni_base=versioni)
         if copiati is not None:
             copiati.extend(fatte)
     if stop_requested():
@@ -775,22 +864,25 @@ def mirror_tree(src: Path, dst: Path, excludes: list[str], delete_extra: bool,
     for target_dir, names in kept.items():
         try:
             for nome in os.listdir(L(target_dir)):
-                if nome in names or nome in (TRASH_DIR, SYNC_STATE_DIR):
+                if nome in names or nome in (TRASH_DIR, VERSIONS_DIR, SYNC_STATE_DIR):
                     continue
                 entry = target_dir / nome
                 if nome.endswith(PART_SUFFIX):         # avanzo di una copia interrotta
                     os.unlink(L(entry))
                     continue
-                to_trash(dst, entry.relative_to(dst).as_posix())
+                finito = to_trash(dst, entry.relative_to(dst).as_posix())
+                annota(stats, "cestino", originale=entry, salvato=finito)
                 stats["deleted"] += 1
         except OSError as exc:
             log(tf("err.trash", path=target_dir, err=exc))
+            annota(stats, "errore", path=target_dir, msg=exc)
             stats["errors"] += 1
 
 
 def _esegui_copie(lavori: list[tuple[Path, Path, int]], stats: dict,
                   progress: "Progress | None", guard: "SpaceGuard | None",
-                  threads: int) -> list[tuple[Path, Path]]:
+                  threads: int,
+                  versioni_base: Path | None = None) -> list[tuple[Path, Path]]:
     """Copia la lista di file, con piu' thread se conviene.
 
     Su tanti file piccoli il tempo se ne va in apertura e chiusura, non in
@@ -807,6 +899,7 @@ def _esegui_copie(lavori: list[tuple[Path, Path, int]], stats: dict,
         s_file, d_file, size = lavoro
         if fermati.is_set() or stop_requested():
             return
+        priorita_bassa(True)
         try:
             with lock:
                 if guard:
@@ -817,12 +910,16 @@ def _esegui_copie(lavori: list[tuple[Path, Path, int]], stats: dict,
                 senza_spazio.append(exc)
             return
         try:
-            copy_atomic(s_file, d_file)
+            if versioni_base is not None:
+                salvata = copy_atomic(s_file, d_file, versioni_base=versioni_base)
+            else:
+                salvata = copy_atomic(s_file, d_file)
         except OSError as exc:
             with lock:
                 if guard:
                     guard.release(size)      # non si e' scritto niente: lo restituisco
                 log(tf("err.copy", path=s_file, err=exc))
+                annota(stats, "errore", path=s_file, msg=exc)
                 stats["errors"] += 1
                 if progress:
                     progress.advance(size, copied=False)
@@ -833,6 +930,9 @@ def _esegui_copie(lavori: list[tuple[Path, Path, int]], stats: dict,
             stats["copied"] += 1
             stats["bytes"] += size
             riuscite.append((s_file, d_file))
+            if salvata is not None:
+                stats["versioned"] = stats.get("versioned", 0) + 1
+                annota(stats, "versione", originale=d_file, salvato=salvata)
             if progress:
                 progress.advance(size, copied=True)
 
@@ -1267,7 +1367,7 @@ def run_jobs(label: str, jobs: list[tuple[Path, Path]], excludes: list[str],
 
 def _excludes_for(cfg: dict, spec: dict) -> list[str]:
     out = list(cfg.get("default_exclude", [])) + list(spec.get("exclude", []) or [])
-    out += [MARKER_NAME, TRASH_DIR, SYNC_STATE_DIR]
+    out += [MARKER_NAME, TRASH_DIR, VERSIONS_DIR, SYNC_STATE_DIR]
     return out
 
 
@@ -1402,6 +1502,7 @@ SYNC_DEFAULT_EXCLUDE = [
     "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",
     "dist", "build", "target", ".next", ".gradle", "*.pyc", "*.pyo", "*.class",
     "*.o", "*.obj", ".DS_Store", "Thumbs.db", "*.swp", SYNC_STATE_DIR, TRASH_DIR,
+    VERSIONS_DIR,
 ]
 
 
@@ -1487,6 +1588,7 @@ def _copy_file(src: Path, dst: Path, stats: dict, key: str) -> bool:
         return True
     except OSError as exc:
         log(tf("err.copy", path=src, err=exc))
+        annota(stats, "errore", path=src, msg=exc)
         stats["errors"] += 1
         return False
 
@@ -1603,11 +1705,13 @@ def sync_pair(local: Path, remote: Path, excludes: list[str], stats: dict,
         base = local if side == "local" else remote
         rel = target.relative_to(base).as_posix()
         try:
-            if target.exists():
-                to_trash(base, rel)
+            if os.path.exists(L(target)):
+                finito = to_trash(base, rel)
+                annota(stats, "cestino", originale=target, salvato=finito)
             stats["deleted_local" if side == "local" else "deleted_remote"] += 1
         except OSError as exc:
             log(tf("err.trash.one", path=target, err=exc))
+            annota(stats, "errore", path=target, msg=exc)
             stats["errors"] += 1
 
     _prune_empty(local)
@@ -1676,7 +1780,9 @@ def run_sync(root: Path, cfg: dict, plan: dict, pc: str) -> tuple[str, dict] | N
     log(tf("sync.end", pc=pc, summary=summary))
     if stats["conflicts"]:
         log(tf("sync.conflicts.summary", n=stats["conflicts"]))
-    return (f"{pc} (sync)", {"copied": stats["in"] + stats["out"],
+    return (f"{pc} (sync)", {"eventi": stats.get("eventi", []),
+                             "eventi_persi": stats.get("eventi_persi", 0),
+                             "copied": stats["in"] + stats["out"],
                              "skipped": 0, "deleted": stats["deleted_local"] + stats["deleted_remote"],
                              "errors": stats["errors"], "bytes": stats["bytes"]})
 
@@ -1695,6 +1801,14 @@ def _inside(path: Path, container: Path) -> bool:
 # --------------------------------------------------------------------------
 
 def handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
+    priorita_bassa(True)
+    try:
+        return _handle_volume(root, cfg, removable)
+    finally:
+        priorita_bassa(False)
+
+
+def _handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
     label = volume_label(root)
     results: list[tuple[str, dict]] = []
     started = time.time()
@@ -1732,7 +1846,14 @@ def handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
         f"{name}: {s['copied']} copiati, {s['errors']} errori" for name, s in results)
     log(tf("vol.summary", label=label, parts=parts))
 
-    record_history({
+    eventi: list[dict] = []
+    persi = 0
+    versioni = 0
+    for _, singolo in results:
+        eventi.extend(singolo.get("eventi", []))
+        persi += int(singolo.get("eventi_persi", 0))
+        versioni += int(singolo.get("versioned", 0))
+    voce = {
         "quando": datetime.now().isoformat(timespec="seconds"),
         "volume": label,
         "serial": volume_serial(root),
@@ -1740,10 +1861,19 @@ def handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
         "copiati": total["copied"],
         "invariati": total["skipped"],
         "cestinati": total["deleted"],
+        "versioni": versioni,
         "errori": total["errors"],
         "byte": total["bytes"],
         "secondi": round(time.time() - started, 1),
-    })
+        "eventi": eventi[:EVENTI_MAX],
+        "eventi_persi": persi + max(0, len(eventi) - EVENTI_MAX),
+    }
+    record_history(voce)
+    for sink in _run_sinks:
+        try:
+            sink(voce)
+        except Exception:
+            pass
     if cfg.get("notify"):
         mb = total["bytes"] / (1024 * 1024)
         notify(f"Backup {label}",
@@ -1845,6 +1975,140 @@ def watch(cfg: dict, stop_event=None) -> int:
         pass
     log(tf("watch.stop"))
     return 0
+
+
+# --------------------------------------------------------------------------
+# ripristino da __deleted e __versions
+# --------------------------------------------------------------------------
+
+_ORARIO_NEL_NOME = re.compile(r"\.(\d{8}-\d{6})(?:-\d+)?$")
+
+
+def origine_di(salvato: Path) -> tuple[Path, Path, str] | None:
+    """Da un file in __deleted o __versions ricava (radice, posto d'origine, tipo).
+
+    La radice e' la cartella che contiene __deleted/__versions; il posto
+    d'origine e' lo stesso percorso relativo, senza l'orario che il nome
+    si e' preso quando e' stato messo da parte.
+    """
+    parti = list(Path(salvato).parts)
+    for indice, parte in enumerate(parti):
+        if parte in (TRASH_DIR, VERSIONS_DIR):
+            radice = Path(*parti[:indice])
+            relativo = Path(*parti[indice + 1:])
+            nome = _ORARIO_NEL_NOME.sub("", relativo.stem) + relativo.suffix
+            tipo = "cestino" if parte == TRASH_DIR else "versione"
+            return radice, radice / relativo.parent / nome, tipo
+    return None
+
+
+def elenca_recuperabili(radice: Path, limite: int = 5000) -> list[dict]:
+    """Tutto quello che si puo' ripristinare sotto una cartella."""
+    trovati: list[dict] = []
+    for cartella_corrente, sottocartelle, _file in os.walk(L(radice)):
+        for speciale in (TRASH_DIR, VERSIONS_DIR):
+            if speciale not in sottocartelle:
+                continue
+            for dentro, _dirs, nomi in os.walk(os.path.join(cartella_corrente, speciale)):
+                for nome in nomi:
+                    completo = os.path.join(dentro, nome)
+                    salvato = Path(completo[len(_PREFISSO_LUNGO):]
+                                   if completo.startswith(_PREFISSO_LUNGO) else completo)
+                    origine = origine_di(salvato)
+                    if origine is None:
+                        continue
+                    _radice, originale, tipo = origine
+                    try:
+                        info = os.stat(completo)
+                    except OSError:
+                        continue
+                    orario = _ORARIO_NEL_NOME.search(salvato.stem)
+                    trovati.append({
+                        "tipo": tipo,
+                        "salvato": str(salvato),
+                        "originale": str(originale),
+                        "quando": (datetime.strptime(orario.group(1), "%Y%m%d-%H%M%S")
+                                   .isoformat(timespec="seconds") if orario else
+                                   datetime.fromtimestamp(info.st_mtime)
+                                   .isoformat(timespec="seconds")),
+                        "byte": info.st_size,
+                    })
+                    if len(trovati) >= limite:
+                        return trovati
+        # dentro __deleted e __versions non si scende: li abbiamo gia' letti
+        sottocartelle[:] = [d for d in sottocartelle if d not in (TRASH_DIR, VERSIONS_DIR)]
+    trovati.sort(key=lambda voce: voce["quando"], reverse=True)
+    return trovati
+
+
+def ripristina(salvato: Path, originale: Path | None = None) -> Path:
+    """Rimette a posto un file messo da parte. Non sovrascrive mai niente.
+
+    Se al posto d'origine nel frattempo c'e' un altro file, quello va nelle
+    versioni prima di essere sostituito: il ripristino non deve diventare a
+    sua volta un modo di perdere dati.
+    """
+    salvato = Path(salvato)
+    origine = origine_di(salvato)
+    if origine is None:
+        raise ValueError(f"{salvato} non sta in {TRASH_DIR} ne' in {VERSIONS_DIR}")
+    radice, dedotto, _tipo = origine
+    bersaglio = Path(originale) if originale else dedotto
+    if not os.path.exists(L(salvato)):
+        raise FileNotFoundError(str(salvato))
+    if os.path.exists(L(bersaglio)):
+        to_versions(radice, bersaglio.relative_to(radice).as_posix())
+    os.makedirs(L(bersaglio.parent), exist_ok=True)
+    shutil.move(L(salvato), L(bersaglio))
+    log(tf("restored", path=bersaglio))
+    return bersaglio
+
+
+# --------------------------------------------------------------------------
+# collegamenti nel menu Start e sul desktop
+# --------------------------------------------------------------------------
+
+def crea_collegamenti(cartelle: list[Path] | None = None) -> list[Path]:
+    """Collegamenti per aprire l'app come una qualsiasi altra.
+
+    Dall'eseguibile puntano all'eseguibile; dal sorgente a pythonw con
+    usb_backup_qt.py, senza finestra nera - la strada che funziona anche
+    quando Smart App Control blocca l'exe non firmato.
+    """
+    if not IS_WIN:
+        log(tf("shortcuts.only.windows"))
+        return []
+    if getattr(sys, "frozen", False):
+        bersaglio, argomenti, icona = sys.executable, "", sys.executable + ",0"
+    else:
+        bersaglio = _python_exe()
+        argomenti = f'"{APP_DIR / "usb_backup_qt.py"}"'
+        icona = str(APP_DIR / "assets" / "icon.ico")
+    script = (
+        "$w = New-Object -ComObject WScript.Shell; "
+        "$fatti = @(); "
+        "$dove = if ($env:UB_DIRS) { $env:UB_DIRS -split '[|]' } else { "
+        "  @([Environment]::GetFolderPath('Programs'), "
+        "    [Environment]::GetFolderPath('Desktop')) }; "
+        "foreach ($d in $dove) { "
+        "  $p = Join-Path $d 'USB Backup.lnk'; "
+        "  $s = $w.CreateShortcut($p); "
+        "  $s.TargetPath = $env:UB_TARGET; $s.Arguments = $env:UB_ARGS; "
+        "  $s.WorkingDirectory = $env:UB_DIR; $s.IconLocation = $env:UB_ICON; "
+        "  $s.Description = 'USB Backup'; $s.Save(); $fatti += $p }; "
+        "$fatti -join [Environment]::NewLine"
+    )
+    ambiente = dict(os.environ, UB_TARGET=bersaglio, UB_ARGS=argomenti,
+                    UB_DIR=str(APP_DIR), UB_ICON=icona,
+                    UB_DIRS="|".join(str(c) for c in (cartelle or [])))
+    esito = run_hidden(["powershell", "-NoProfile", "-Command", script],
+                       capture_output=True, text=True, env=ambiente)
+    fatti = [Path(r.strip()) for r in (esito.stdout or "").splitlines() if r.strip()]
+    for percorso in fatti:
+        log(tf("shortcut.made", path=percorso))
+    if esito.returncode != 0:
+        log(tf("err.shortcut", err=(esito.stderr or "").strip()[-200:]))
+    return fatti
 
 
 # --------------------------------------------------------------------------

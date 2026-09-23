@@ -260,6 +260,48 @@ UI = {
     "Cartella dei backup": "Backup folder",
     "File di impostazioni da importare": "Settings file to import",
     "Nome cartella di destinazione": "Destination folder name",
+    # --- versioni, ripristino, avvisi, collegamenti ---
+    "Tieni la versione precedente dei file sovrascritti":
+        "Keep the previous version of overwritten files",
+    "Se un file si rovina sul PC, la copia buona non viene persa: finisce in "
+    "__versions. Occupa spazio.":
+        "If a file gets damaged on the PC, the good copy is not lost: it goes to "
+        "__versions. It takes up space.",
+    "Copia in secondo piano, senza rallentare il PC":
+        "Copy in the background, without slowing the PC down",
+    "Avvisami se un giro finisce con errori": "Tell me when a run ends with errors",
+    "Collegamenti": "Shortcuts",
+    "Nel menu Start e sul desktop, con l'icona dell'app e senza finestra nera. Dal "
+    "sorgente funzionano anche dove Windows blocca l'eseguibile non firmato.":
+        "In the Start menu and on the desktop, with the app icon and no black window. "
+        "From source they work even where Windows blocks the unsigned executable.",
+    "Crea collegamenti": "Create shortcuts",
+    "Collegamenti creati: ": "Shortcuts created: ",
+    "Collegamenti non creati: guarda il log": "Shortcuts not created: check the log",
+    "Doppio clic su un giro per vederne i dettagli.":
+        "Double-click a run to see its details.",
+    "Dettagli del giro": "Run details",
+    "Ripristina da una cartella...": "Restore from a folder...",
+    "Seleziona prima un giro nella tabella": "Pick a run in the table first",
+    "Cartella in cui cercare file da ripristinare": "Folder to search for files to restore",
+    "Niente da ripristinare in quella cartella": "Nothing to restore in that folder",
+    "Niente da segnalare: in questo giro non ci sono stati errori, ne' file messi "
+    "da parte.":
+        "Nothing to report: no errors in this run, and no files set aside.",
+    "Tipo": "Type",
+    "File": "File",
+    "Dettaglio": "Detail",
+    "Errore": "Error",
+    "Versione salvata": "Saved version",
+    "copia diversa dall'originale": "copy differs from the original",
+    "Ripristina selezionati": "Restore selected",
+    "Rimette i file dov'erano. Se al loro posto c'e' gia' qualcosa, quello va in "
+    "__versions: non si perde niente.":
+        "Puts the files back where they were. If something is already there, it goes "
+        "to __versions: nothing is lost.",
+    "Chiudi": "Close",
+    "Ripristino": "Restore",
+    "USB Backup: errori nell'ultimo giro": "USB Backup: errors in the last run",
 }
 
 
@@ -399,6 +441,19 @@ MESSAGGI = {
     "conf.remote": ("{rel}: vince la versione sulla chiavetta (piu' recente)",
                     "{rel}: the drive's version wins (newer)"),
     "stale.item": ("{nome} da {giorni} giorni", "{nome} for {giorni} days"),
+    "restored": ("[ripristinato] {path}", "[restored] {path}"),
+    "shortcut.made": ("[collegamento] {path}", "[shortcut] {path}"),
+    "shortcuts.only.windows": ("[collegamenti] per ora solo su Windows",
+                               "[shortcuts] Windows only for now"),
+    "err.shortcut": ("[errore] collegamenti: {err}", "[error] shortcuts: {err}"),
+    "errors.notice": ("{n} errori durante il backup di {volume}. Apri l'app per i dettagli.",
+                      "{n} errors while backing up {volume}. Open the app for details."),
+    "errors.tooltip": ("USB Backup - {n} errori da guardare", "USB Backup - {n} errors to look at"),
+    "details.summary": ("Errori: {errori}.  File recuperabili: {recuperabili}.",
+                        "Errors: {errori}.  Recoverable files: {recuperabili}."),
+    "details.lost": ("(altri {n} eventi non registrati: il giro ne ha avuti troppi)",
+                     "({n} more events not recorded: the run had too many)"),
+    "restore.done": ("Ripristinati {n} file.", "Restored {n} files."),
     "summary": ("copiati {copiati} file ({mb} MB), invariati {invariati}, "
                 "in __deleted {cestinati}, errori {errori}, in {secondi}s",
                 "copied {copiati} files ({mb} MB), unchanged {invariati}, "

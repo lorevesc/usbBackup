@@ -24,8 +24,9 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QButtonGroup,
                                QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
                                QPlainTextEdit, QPushButton, QScrollArea,
                                QSizePolicy, QSplitter, QStackedWidget,
-                               QComboBox, QSystemTrayIcon, QTableWidget,
-                               QTableWidgetItem,
+                               QComboBox, QDialog, QHeaderView, QSystemTrayIcon,
+                               QTableWidget, QTableWidgetItem, QTreeWidget,
+                               QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -491,6 +492,89 @@ class Toast(QFrame):
         self.adjustSize()
 
 
+class EventiDialog(QDialog):
+    """Elenco di cosa e' successo (o di cosa si puo' recuperare), con ripristino."""
+
+    TIPI = {"errore": "Errore", "cestino": "In __deleted", "versione": "Versione salvata"}
+
+    def __init__(self, genitore, titolo: str, eventi: list[dict], persi: int,
+                 solo_recuperabili: bool = False):
+        super().__init__(genitore)
+        self.setWindowTitle(titolo)
+        self.resize(980, 560)
+        self.eventi = eventi
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(12)
+
+        errori = sum(1 for e in eventi if e.get("tipo") == "errore")
+        recuperabili = sum(1 for e in eventi if e.get("salvato"))
+        riepilogo = tf("details.summary", errori=errori, recuperabili=recuperabili)
+        if persi:
+            riepilogo += "  " + tf("details.lost", n=persi)
+        if not eventi:
+            riepilogo = t("Niente da segnalare: in questo giro non ci sono stati errori, "
+                          "ne' file messi da parte.")
+        lay.addWidget(label(riepilogo, "hint"))
+
+        self.albero = QTreeWidget()
+        self.albero.setColumnCount(3)
+        self.albero.setHeaderLabels([t("Tipo"), t("File"), t("Dettaglio")])
+        self.albero.setRootIsDecorated(False)
+        self.albero.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.albero.header().setSectionResizeMode(1, QHeaderView.Stretch)
+        for evento in eventi:
+            tipo = evento.get("tipo", "")
+            if tipo == "errore":
+                file_, dettaglio = evento.get("path", ""), evento.get("msg", "")
+                if dettaglio == "verify":
+                    dettaglio = t("copia diversa dall'originale")
+            else:
+                file_ = evento.get("originale", "")
+                dettaglio = evento.get("quando", "").replace("T", " ") or \
+                    evento.get("salvato", "")
+            riga = QTreeWidgetItem([t(self.TIPI.get(tipo, tipo)), file_, dettaglio])
+            riga.setToolTip(1, file_)
+            riga.setToolTip(2, evento.get("salvato", dettaglio))
+            if tipo == "errore":
+                riga.setForeground(0, QColor(C["danger"]))
+            self.albero.addTopLevelItem(riga)
+        self.albero.resizeColumnToContents(0)
+        lay.addWidget(self.albero, 1)
+
+        barra = QHBoxLayout()
+        self.btn_ripristina = button(t("Ripristina selezionati"), "primary", self.ripristina)
+        self.btn_ripristina.setEnabled(recuperabili > 0)
+        barra.addWidget(self.btn_ripristina)
+        barra.addWidget(label(t("Rimette i file dov'erano. Se al loro posto c'e' gia' "
+                                "qualcosa, quello va in __versions: non si perde niente."),
+                              "hint"), 1)
+        barra.addWidget(button(t("Chiudi"), "ghost", self.accept))
+        lay.addLayout(barra)
+
+    def ripristina(self):
+        scelti = [self.albero.indexOfTopLevelItem(r) for r in self.albero.selectedItems()]
+        scelti = [i for i in scelti if self.eventi[i].get("salvato")]
+        if not scelti:
+            return
+        fatti, falliti = 0, []
+        for indice in sorted(scelti, reverse=True):
+            evento = self.eventi[indice]
+            try:
+                ub.ripristina(Path(evento["salvato"]),
+                              Path(evento["originale"]) if evento.get("originale") else None)
+                fatti += 1
+                self.albero.takeTopLevelItem(indice)
+                del self.eventi[indice]
+            except Exception as exc:
+                falliti.append(f"{Path(evento['salvato']).name}: {exc}")
+        messaggio = tf("restore.done", n=fatti)
+        if falliti:
+            messaggio += "\n\n" + "\n".join(falliti[:8])
+        QMessageBox.information(self, t("Ripristino"), messaggio)
+        self.btn_ripristina.setEnabled(any(e.get("salvato") for e in self.eventi))
+
+
 # --------------------------------------------------------------------------
 # ponte fra thread di lavoro e interfaccia
 # --------------------------------------------------------------------------
@@ -499,6 +583,7 @@ class Bus(QObject):
     line = Signal(str)
     backup_done = Signal()
     device_changed = Signal()
+    run_finished = Signal(dict)
 
 
 class DeviceEvents(QAbstractNativeEventFilter):
@@ -614,7 +699,11 @@ class Window(QMainWindow):
         self.bus.line.connect(self.append_log)
         self.bus.backup_done.connect(self.on_backup_done)
         self.bus.device_changed.connect(self.on_device_changed)
+        self.bus.run_finished.connect(self.on_run_finished)
         ub.add_log_sink(self.bus.line.emit)
+        ub.add_run_sink(self.bus.run_finished.emit)
+        self._errori_da_vedere = 0
+        self._storia: list[dict] = []
 
         self._build()
         self._build_tray()
@@ -938,8 +1027,10 @@ class Window(QMainWindow):
         return page
 
     # ------------------------------------------------------- pagina storico
-    COLONNE = (t("Quando"), t("Volume"), t("Copiati"), t("Invariati"), t("In __deleted"),
-               t("Errori"), t("Dati"), t("Durata"))
+    # tradotte quando servono, non all'import: a quel punto la lingua non e'
+    # ancora stata letta dalla configurazione
+    COLONNE = ("Quando", "Volume", "Copiati", "Invariati", "In __deleted",
+               "Errori", "Dati", "Durata")
 
     def _page_history(self) -> QWidget:
         page = QWidget()
@@ -952,7 +1043,9 @@ class Window(QMainWindow):
         self.history_card = card
         card.head.addWidget(button(t("Aggiorna"), "ghost", self.load_history))
         self.history_table = QTableWidget(0, len(self.COLONNE))
-        self.history_table.setHorizontalHeaderLabels(self.COLONNE)
+        self.history_table.setHorizontalHeaderLabels([t(c) for c in self.COLONNE])
+        self.history_table.setToolTip(t("Doppio clic su un giro per vederne i dettagli."))
+        self.history_table.cellDoubleClicked.connect(self.open_run_details)
         self.history_table.verticalHeader().setVisible(False)
         self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -965,6 +1058,9 @@ class Window(QMainWindow):
 
         riga = QHBoxLayout()
         riga.setSpacing(9)
+        riga.addWidget(button(t("Dettagli del giro"), "normal", self.open_run_details))
+        riga.addWidget(button(t("Ripristina da una cartella..."), "normal",
+                              self.restore_from_folder))
         riga.addWidget(button(t("Apri la cartella dei log"), "ghost",
                               lambda: reveal(Path(str(self.cfg.get("log_file") or
                                                       ub.APP_DIR)).expanduser().parent)))
@@ -974,8 +1070,36 @@ class Window(QMainWindow):
         lay.addWidget(card)
         return page
 
+    def open_run_details(self, riga: int | None = None, _colonna: int | None = None):
+        """Cosa e' successo in un giro: errori, file cestinati, versioni salvate."""
+        if not isinstance(riga, int) or riga < 0:
+            riga = self.history_table.currentRow()
+        if riga < 0 or riga >= len(self._storia):
+            self.toast(t("Seleziona prima un giro nella tabella"), "err")
+            return
+        voce = self._storia[riga]
+        titolo = (f"{voce.get('volume', '')} - "
+                  f"{str(voce.get('quando', '')).replace('T', '  ')}")
+        persi = int(voce.get("eventi_persi", 0))
+        EventiDialog(self, titolo, voce.get("eventi") or [], persi).exec()
+        self.load_history()
+
+    def restore_from_folder(self):
+        """Cerca __deleted e __versions sotto una cartella e fa scegliere cosa riprendere."""
+        inizio = str(ub.dest_root_of(self.cfg))
+        scelta = QFileDialog.getExistingDirectory(
+            self, t("Cartella in cui cercare file da ripristinare"), inizio)
+        if not scelta:
+            return
+        trovati = ub.elenca_recuperabili(Path(scelta))
+        if not trovati:
+            self.toast(t("Niente da ripristinare in quella cartella"))
+            return
+        EventiDialog(self, scelta, trovati, 0, solo_recuperabili=True).exec()
+
     def load_history(self):
         storia = ub.read_history()
+        self._storia = storia
         self.history_table.setRowCount(len(storia))
         for riga, voce in enumerate(storia):
             quando = str(voce.get("quando", "")).replace("T", "  ")
@@ -1081,6 +1205,20 @@ class Window(QMainWindow):
         card.field(t("Lingua"), lingua_riga, t("La lingua cambia alla prossima apertura."))
 
         card.body.addSpacing(12)
+        self.cfg_versions = Switch(t("Tieni la versione precedente dei file sovrascritti"))
+        card.body.addWidget(self.cfg_versions)
+        card.body.addSpacing(4)
+        card.body.addWidget(label(t("Se un file si rovina sul PC, la copia buona non "
+                                    "viene persa: finisce in __versions. Occupa spazio."),
+                                  "hint"))
+        card.body.addSpacing(12)
+        self.cfg_low = Switch(t("Copia in secondo piano, senza rallentare il PC"))
+        card.body.addWidget(self.cfg_low)
+        card.body.addSpacing(12)
+        self.cfg_notify_err = Switch(t("Avvisami se un giro finisce con errori"))
+        card.body.addWidget(self.cfg_notify_err)
+
+        card.body.addSpacing(12)
         self.cfg_gitignore = Switch(t("Rispetta i .gitignore dei progetti"))
         card.body.addWidget(self.cfg_gitignore)
         card.body.addSpacing(4)
@@ -1118,8 +1256,8 @@ class Window(QMainWindow):
         lay.addWidget(card)
 
         auto = Card(t("Avvio automatico al login"),
-                    "Windows: attività pianificata ONLOGON, senza finestra.  "
-                    "macOS: LaunchAgent caricato con launchctl.")
+                    t("Windows: attività pianificata ONLOGON, senza finestra.  "
+                      "macOS: LaunchAgent caricato con launchctl."))
         row = QHBoxLayout()
         row.setSpacing(9)
         row.addWidget(button(t("Installa"), "normal", lambda: self.autostart(True)))
@@ -1127,6 +1265,16 @@ class Window(QMainWindow):
         row.addStretch(1)
         auto.body.addLayout(row)
         lay.addWidget(auto)
+
+        colleg = Card(t("Collegamenti"),
+                      t("Nel menu Start e sul desktop, con l'icona dell'app e senza "
+                        "finestra nera. Dal sorgente funzionano anche dove Windows "
+                        "blocca l'eseguibile non firmato."))
+        riga_c = QHBoxLayout()
+        riga_c.addWidget(button(t("Crea collegamenti"), "normal", self.make_shortcuts))
+        riga_c.addStretch(1)
+        colleg.body.addLayout(riga_c)
+        lay.addWidget(colleg)
         return page
 
     # ---------------------------------------------------------------- log
@@ -1596,6 +1744,9 @@ class Window(QMainWindow):
         self.cfg_tray.setChecked(bool(self.cfg.get("close_to_tray", True)))
         self.cfg_minimized.setChecked(bool(self.cfg.get("start_minimized", False)))
         self.cfg_gitignore.setChecked(bool(self.cfg.get("use_gitignore", False)))
+        self.cfg_versions.setChecked(bool(self.cfg.get("keep_versions", False)))
+        self.cfg_low.setChecked(bool(self.cfg.get("low_priority", True)))
+        self.cfg_notify_err.setChecked(bool(self.cfg.get("notify_errors", True)))
         self.cfg_verify.setText(str(self.cfg.get("verify_percent", 1)))
         indice = self.cfg_lingua.findData(str(self.cfg.get("language", "auto")))
         self.cfg_lingua.setCurrentIndex(max(0, indice))
@@ -1616,6 +1767,9 @@ class Window(QMainWindow):
         cfg["close_to_tray"] = self.cfg_tray.isChecked()
         cfg["start_minimized"] = self.cfg_minimized.isChecked()
         cfg["use_gitignore"] = self.cfg_gitignore.isChecked()
+        cfg["keep_versions"] = self.cfg_versions.isChecked()
+        cfg["low_priority"] = self.cfg_low.isChecked()
+        cfg["notify_errors"] = self.cfg_notify_err.isChecked()
         cfg["language"] = self.cfg_lingua.currentData()
         try:
             cfg["verify_percent"] = max(0.0, min(100.0, float(self.cfg_verify.text())))
@@ -1686,6 +1840,13 @@ class Window(QMainWindow):
         self.load_pc_plan()
         self.refresh_volumes()
         self.toast("Importato: controlla i percorsi nella scheda Questo PC", "ok")
+
+    def make_shortcuts(self):
+        fatti = ub.crea_collegamenti()
+        if fatti:
+            self.toast(t("Collegamenti creati: ") + ", ".join(p.parent.name for p in fatti), "ok")
+        else:
+            self.toast(t("Collegamenti non creati: guarda il log"), "err")
 
     def autostart(self, install: bool):
         rc = ub.install_autostart(gui=True) if install else ub.uninstall_autostart()
@@ -1876,10 +2037,40 @@ class Window(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def on_run_finished(self, voce: dict):
+        """Un giro e' finito: se ci sono stati errori, non devono passare inosservati."""
+        errori = int(voce.get("errori", 0))
+        if not errori:
+            return
+        self._errori_da_vedere += errori
+        self.update_tray()
+        if not self.cfg.get("notify_errors", True):
+            return
+        titolo = t("USB Backup: errori nell'ultimo giro")
+        testo = tf("errors.notice", n=errori, volume=voce.get("volume", ""))
+        if self.tray is not None:
+            self.tray.showMessage(titolo, testo, QSystemTrayIcon.Warning, 8000)
+        else:
+            ub.notify(titolo, testo)
+
+    def errors_seen(self):
+        """Hai aperto l'app: l'avviso ha fatto il suo lavoro."""
+        if self._errori_da_vedere:
+            self._errori_da_vedere = 0
+            self.update_tray()
+
+    def showEvent(self, event):  # noqa: N802
+        super().showEvent(event)
+        self.errors_seen()
+
     def update_tray(self):
         if self.tray is None:
             return
         attiva = self.watching()
+        self.tray.setIcon(appicon.app_icon(avviso=bool(self._errori_da_vedere)))
+        if self._errori_da_vedere:
+            self.tray.setToolTip(tf("errors.tooltip", n=self._errori_da_vedere))
+            return
         self.tray.setToolTip(t("USB Backup - sorveglianza ")
                              + (t("attiva") if attiva else t("spenta")))
         if self.act_watch.isChecked() != attiva:

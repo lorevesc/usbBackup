@@ -141,10 +141,27 @@ def glyph(size: int, color: str = WHITE) -> QPixmap:
     return pixmap
 
 
-def app_icon() -> QIcon:
+def paint_alert(size: int) -> QPixmap:
+    """L'icona con un pallino rosso in alto a destra: l'ultimo giro ha avuto errori."""
+    pixmap = paint(size)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    s = float(size)
+    raggio = s * 0.21
+    centro = QPointF(s - raggio - s * 0.02, raggio + s * 0.02)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor("#0b0e13"))              # anello scuro: si stacca da ogni sfondo
+    painter.drawEllipse(centro, raggio + s * 0.05, raggio + s * 0.05)
+    painter.setBrush(QColor("#ff4d4f"))
+    painter.drawEllipse(centro, raggio, raggio)
+    painter.end()
+    return pixmap
+
+
+def app_icon(avviso: bool = False) -> QIcon:
     icon = QIcon()
     for size in SIZES:
-        icon.addPixmap(paint(size))
+        icon.addPixmap(paint_alert(size) if avviso else paint(size))
     return icon
 
 

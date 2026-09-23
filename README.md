@@ -18,6 +18,10 @@ pip install PySide6
 python usb_backup_qt.py
 ```
 
+Da *Impostazioni* -> **Crea collegamenti** ottieni l'icona nel menu Start e sul
+desktop, senza finestra nera: dal sorgente l'app diventa come le altre, e
+funziona anche dove Windows blocca l'eseguibile non firmato.
+
 PySide6 serve solo all'interfaccia. Il motore ([usb_backup.py](usb_backup.py))
 usa solo la libreria standard e funziona anche da riga di comando.
 
@@ -47,6 +51,8 @@ Quattro schede:
 - **Questo PC** - il piano del PC: push, pull, a quali dischi si applica.
   Il piano si puo' legare al numero di serie di un disco preciso.
 - **Storico** - gli ultimi 200 giri: quando, quale disco, quanti file, errori.
+  Doppio clic su un giro per vedere quali file hanno dato errore, quali sono
+  finiti in `__deleted` e quali versioni sono state salvate, e ripristinarli.
 - **Impostazioni** - cartella dei backup, lingua, esclusioni, verifica,
   avvio automatico, esporta/importa la configurazione.
 
@@ -54,6 +60,9 @@ In fondo il log in diretta, con la barra di avanzamento; nella barra laterale
 l'interruttore della sorveglianza, che viene ricordato fra un'apertura e l'altra.
 Chiudendo la finestra il programma resta nella tray vicino all'orologio: doppio
 clic per riaprirlo, tasto destro per il menu, *Esci* per chiuderlo davvero.
+
+Se un giro finisce con errori, l'icona nella tray prende un pallino rosso e
+arriva una notifica; entrambi spariscono quando apri l'app.
 
 Se un disco visto in passato non viene collegato da piu' di una settimana, in
 cima alla scheda Chiavette compare un avviso. Un disco che non usi piu' si
@@ -104,6 +113,18 @@ tutti i file sembrerebbero modificati di un'ora esatta, e partirebbe una
 ricopia completa. Uno scarto di un'ora esatta a parita' di dimensione viene
 riconosciuto come lo stesso file (`dst_tolerance`).
 
+**Versioni dei file sovrascritti** (opzione, spenta di default). "Niente viene
+cancellato" copre i file che spariscono; questa copre quelli che *cambiano*. Se
+un file si rovina sul PC - svuotato, corrotto, cifrato - al giro dopo la copia
+buona verrebbe sostituita da quella rotta. Con l'opzione accesa, la versione
+precedente viene spostata in `__versions/` con data e ora nel nome, e le
+versioni si accumulano. Costa spazio: va svuotata a mano come `__deleted`.
+
+**Ripristino.** Dal dettaglio di un giro, o con *Ripristina da una cartella*
+nello Storico, i file in `__deleted` e `__versions` tornano dov'erano. Il
+ripristino non sovrascrive mai: se al posto d'origine c'e' gia' un file, quello
+viene messo nelle versioni.
+
 **Ferma.** Un giro si interrompe quando vuoi: finisce il file corrente e si
 ferma. Al giro dopo riprende da li'.
 
@@ -115,6 +136,12 @@ file per file: su 8.000 file gia' sincronizzati, **286 ms contro 2.280**.
 
 Le copie vanno in parallelo (`copy_threads`, 8 di default): su file piccoli si
 passa da circa 640 a 930 file al secondo.
+
+Il lavoro gira **in secondo piano** (`low_priority`, acceso di default): su
+Windows i thread che copiano abbassano la priorita' di disco e memoria, su macOS
+il loro I/O viene rallentato quando il sistema ha altro da fare. Copia lo
+stesso, ma lascia la precedenza a quello che stai facendo tu. Riguarda solo chi
+copia, non l'interfaccia.
 
 I totali del giro precedente fanno da stima per la barra di avanzamento, cosi'
 l'albero si percorre una volta sola.
@@ -181,6 +208,9 @@ modello con tutti i valori di default e' [config.example.json](config.example.js
 | `copy_threads` | `8` | Copie in parallelo |
 | `verify_percent` | `1` | Percentuale di file ricontrollati dopo la copia; `0` la spegne |
 | `use_gitignore` | `false` | Salta quello che i `.gitignore` dei progetti escludono |
+| `keep_versions` | `false` | Sposta in `__versions` la versione che sta per essere sovrascritta |
+| `low_priority` | `true` | Copia in secondo piano, senza rallentare il PC |
+| `notify_errors` | `true` | Notifica quando un giro finisce con errori |
 | `dst_tolerance` | `true` | Uno scarto di un'ora esatta non conta come modifica |
 | `stale_days` | `7` | Dopo quanti giorni avvisare di un disco non collegato; `0` lo spegne |
 | `include_fixed_drives` | `true` | Considera anche i dischi fissi non di sistema (molti SSD USB lo sono) |
