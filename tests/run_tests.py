@@ -10,8 +10,10 @@ le altre, e nessuna puo' sporcare lo stato di quella dopo.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -40,12 +42,17 @@ def main() -> int:
     falliti: list[tuple[str, str]] = []
     inizio = time.time()
 
+    # una casa finta: le suite che non indicano un log o una destinazione non
+    # devono scrivere nel ~/Backup vero
+    casa = tempfile.mkdtemp(prefix="casa_test_")
+    ambiente = dict(os.environ, HOME=casa, USERPROFILE=casa)
+
     for suite in elenco:
         etichetta = suite.stem.replace("test_", "")
         print(f"  {etichetta:<16}", end="", flush=True)
         avvio = time.time()
         esito = subprocess.run([sys.executable, str(suite)],
-                               capture_output=True, text=True, cwd=QUI)
+                               capture_output=True, text=True, cwd=QUI, env=ambiente)
         durata = time.time() - avvio
         if esito.returncode == 0:
             ultima = [r for r in esito.stdout.strip().splitlines() if r.strip()]
