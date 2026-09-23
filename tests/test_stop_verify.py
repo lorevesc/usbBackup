@@ -16,11 +16,19 @@ for i in range(400):
 # ---------- 1. stop durante il giro ----------
 ub.clear_stop()
 stats = ub.new_stats()
-def ferma_fra_poco():
-    time.sleep(0.25)
-    ub.request_stop()
-threading.Thread(target=ferma_fra_poco, daemon=True).start()
+# lo stop scatta da dentro la copia, dopo 50 file: con un timer il test
+# dipendeva dalla velocita' del disco, e su un PC veloce finiva prima
+originale_copia = ub.copy_atomic
+contati = {"n": 0}
+def copia_e_poi_ferma(a, b, *args, **kw):
+    risultato = originale_copia(a, b, *args, **kw)
+    contati["n"] += 1
+    if contati["n"] == 50:
+        ub.request_stop()
+    return risultato
+ub.copy_atomic = copia_e_poi_ferma
 ub.run_jobs("prova", [(src, tmp / "dst")], [], False, stats)
+ub.copy_atomic = originale_copia
 assert any("[fermato]" in r for r in righe), righe[-3:]
 copiati = len(list((tmp / "dst").glob("*.bin")))
 assert 0 < copiati < 400, f"copiati {copiati}: non si e' fermato a meta'"

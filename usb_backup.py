@@ -83,6 +83,7 @@ DEFAULT_CONFIG = {
     "use_gitignore": False,
     "stale_days": 7,
     "language": "auto",
+    "autostart": True,
     "run_on_start": True,
     "close_to_tray": True,
     "start_minimized": False,
@@ -2068,7 +2069,8 @@ def ripristina(salvato: Path, originale: Path | None = None) -> Path:
 # collegamenti nel menu Start e sul desktop
 # --------------------------------------------------------------------------
 
-def crea_collegamenti(cartelle: list[Path] | None = None) -> list[Path]:
+def crea_collegamenti(cartelle: list[Path] | None = None,
+                      luoghi: tuple[str, ...] = ("Programs", "Desktop")) -> list[Path]:
     """Collegamenti per aprire l'app come una qualsiasi altra.
 
     Dall'eseguibile puntano all'eseguibile; dal sorgente a pythonw con
@@ -2088,8 +2090,8 @@ def crea_collegamenti(cartelle: list[Path] | None = None) -> list[Path]:
         "$w = New-Object -ComObject WScript.Shell; "
         "$fatti = @(); "
         "$dove = if ($env:UB_DIRS) { $env:UB_DIRS -split '[|]' } else { "
-        "  @([Environment]::GetFolderPath('Programs'), "
-        "    [Environment]::GetFolderPath('Desktop')) }; "
+        "  $env:UB_SPECIAL -split '[|]' | ForEach-Object { "
+        "    [Environment]::GetFolderPath($_) } }; "
         "foreach ($d in $dove) { "
         "  $p = Join-Path $d 'USB Backup.lnk'; "
         "  $s = $w.CreateShortcut($p); "
@@ -2100,7 +2102,8 @@ def crea_collegamenti(cartelle: list[Path] | None = None) -> list[Path]:
     )
     ambiente = dict(os.environ, UB_TARGET=bersaglio, UB_ARGS=argomenti,
                     UB_DIR=str(APP_DIR), UB_ICON=icona,
-                    UB_DIRS="|".join(str(c) for c in (cartelle or [])))
+                    UB_DIRS="|".join(str(c) for c in (cartelle or [])),
+                    UB_SPECIAL="|".join(luoghi))
     esito = run_hidden(["powershell", "-NoProfile", "-Command", script],
                        capture_output=True, text=True, env=ambiente)
     fatti = [Path(r.strip()) for r in (esito.stdout or "").splitlines() if r.strip()]
@@ -2132,15 +2135,18 @@ def _python_exe(windowless: bool = True) -> str:
 def launch_args(gui: bool = False) -> list[str]:
     """Programma e argomenti da far ripartire al login.
 
-    - dall'eseguibile: l'eseguibile stesso, che riapre l'app e riprende
-    - dal sorgente, chiesto dall'app: l'app, cosi' ritrovi la tray (e se
-      Smart App Control blocca l'exe non firmato, questa e' la strada)
+    - dall'eseguibile: l'eseguibile stesso, che riapre l'app nella tray
+    - dal sorgente, chiesto dall'app: l'app nella tray (e se Smart App
+      Control blocca l'exe non firmato, questa e' la strada)
     - dal sorgente, da riga di comando: il watcher senza interfaccia
+
+    `--tray` fa partire l'app direttamente nella tray: all'accensione del
+    computer nessuno vuole una finestra che si apre da sola.
     """
     if getattr(sys, "frozen", False):
-        return [sys.executable]
+        return [sys.executable, "--tray"]
     if gui:
-        return [_python_exe(), str(APP_DIR / "usb_backup_qt.py")]
+        return [_python_exe(), str(APP_DIR / "usb_backup_qt.py"), "--tray"]
     return [_python_exe(), str(APP_DIR / "usb_backup.py"), "--watch"]
 
 
@@ -2149,18 +2155,90 @@ def launch_command(gui: bool = False) -> str:
                     for pezzo in launch_args(gui))
 
 
+def _normalizza_comando(testo: str) -> str:
+    return " ".join(testo.replace('"', " ").lower().split())
+
+
+# Su Windows l'avvio automatico sta nella chiave Run del registro dell'utente.
+# Un'attivita' pianificata con avvio al login si crea solo da amministratore
+# ("Accesso negato" da utente normale): la chiave Run no, ed e' quella che
+# Gestione attivita' mostra fra le app di avvio, dove si puo' anche spegnere.
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "USB Backup"
+
+
+def _run_leggi() -> str | None:
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as chiave:
+            valore, _tipo = winreg.QueryValueEx(chiave, RUN_NAME)
+            return str(valore)
+    except OSError:
+        return None
+
+
+def _run_scrivi(comando: str) -> None:
+    import winreg
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as chiave:
+        winreg.SetValueEx(chiave, RUN_NAME, 0, winreg.REG_SZ, comando)
+
+
+def _run_cancella() -> None:
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
+                            winreg.KEY_SET_VALUE) as chiave:
+            winreg.DeleteValue(chiave, RUN_NAME)
+    except FileNotFoundError:
+        pass
+
+
+def autostart_registrato() -> str | None:
+    """Il comando che parte al login, se c'e' (None se non e' registrato)."""
+    if IS_WIN:
+        return _run_leggi()
+    if IS_MAC:
+        if not PLIST_PATH.exists():
+            return None
+        pezzi = re.findall(r"<string>(.*?)</string>", PLIST_PATH.read_text(encoding="utf-8"))
+        return " ".join(p for p in pezzi if p != PLIST_LABEL and "launchagent.log" not in p)
+    return None
+
+
+def sync_autostart(cfg: dict) -> str:
+    """Allinea l'avvio automatico a quello che dice la configurazione.
+
+    Di default e' acceso: l'app si registra da sola al primo avvio. Se nel
+    frattempo il programma e' stato spostato, la registrazione viene
+    rifatta con il percorso nuovo. Ritorna cosa ha fatto.
+    """
+    voluto = bool(cfg.get("autostart", True))
+    attuale = autostart_registrato()
+    if not voluto:
+        if attuale is None:
+            return "spento"
+        uninstall_autostart()
+        log(tf("autostart", cosa=t("rimosso"), codice=0))
+        return "rimosso"
+    atteso = launch_command(gui=True)
+    if attuale is not None and _normalizza_comando(attuale) == _normalizza_comando(atteso):
+        return "a posto"
+    codice = install_autostart(gui=True)
+    # "installato" solo se e' vero: prima il log lo diceva anche quando il
+    # sistema aveva rifiutato, e per mesi nessuno se n'e' accorto
+    log(tf("autostart", cosa=t("installato") if codice == 0 else t("non riuscito"),
+           codice=codice))
+    return "installato" if codice == 0 else "errore"
+
+
 def install_autostart(gui: bool = False) -> int:
     if IS_WIN:
-        cmd = launch_command(gui)
-        res = run_hidden(
-            ["schtasks", "/Create", "/TN", TASK_NAME, "/TR", cmd,
-             "/SC", "ONLOGON", "/RL", "LIMITED", "/F"],
-            capture_output=True, text=True,
-        )
-        print((res.stdout or res.stderr).strip())
-        if res.returncode == 0:
-            print(f'OK, parte a ogni logon. Avvio adesso: schtasks /Run /TN "{TASK_NAME}"')
-        return res.returncode
+        try:
+            _run_scrivi(launch_command(gui))
+        except OSError as exc:
+            log(tf("err.autostart", err=exc))
+            return 1
+        return 0
     if IS_MAC:
         PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
         log_out = Path(load_config()["log_file"]).expanduser().parent / "launchagent.log"
@@ -2175,7 +2253,7 @@ def install_autostart(gui: bool = False) -> int:
     {"".join(f"<string>{pezzo}</string>" for pezzo in launch_args(gui))}
   </array>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <key>KeepAlive</key>{"<false/>" if gui or getattr(sys, "frozen", False) else "<true/>"}
   <key>StandardOutPath</key><string>{log_out}</string>
   <key>StandardErrorPath</key><string>{log_out}</string>
 </dict>
@@ -2193,10 +2271,12 @@ def install_autostart(gui: bool = False) -> int:
 
 def uninstall_autostart() -> int:
     if IS_WIN:
-        res = run_hidden(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
-                             capture_output=True, text=True)
-        print((res.stdout or res.stderr).strip())
-        return res.returncode
+        try:
+            _run_cancella()
+        except OSError as exc:
+            log(tf("err.autostart", err=exc))
+            return 1
+        return 0
     if IS_MAC:
         run_hidden(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
         PLIST_PATH.unlink(missing_ok=True)

@@ -18,8 +18,8 @@ pip install PySide6
 python usb_backup_qt.py
 ```
 
-Da *Impostazioni* -> **Crea collegamenti** ottieni l'icona nel menu Start e sul
-desktop, senza finestra nera: dal sorgente l'app diventa come le altre, e
+Da *Impostazioni* ci sono due pulsanti, **Collegamento nel menu Start** e
+**Collegamento sul desktop**: l'icona dell'app, senza finestra nera, e dal sorgente l'app diventa come le altre, e
 funziona anche dove Windows blocca l'eseguibile non firmato.
 
 PySide6 serve solo all'interfaccia. Il motore ([usb_backup.py](usb_backup.py))
@@ -58,6 +58,18 @@ Quattro schede:
 
 In fondo il log in diretta, con la barra di avanzamento; nella barra laterale
 l'interruttore della sorveglianza, che viene ricordato fra un'apertura e l'altra.
+
+**Avvio automatico, acceso di default.** Al primo avvio l'app si registra da
+sola e da li' parte a ogni accesso, direttamente nella tray. Si spegne da
+*Impostazioni*. Su Windows usa la chiave `Run` del registro utente (la stessa
+che Gestione attivita' mostra fra le app di avvio): non servono privilegi di
+amministratore. Se sposti il programma, la registrazione si aggiorna da sola al
+successivo avvio.
+
+**Una sola app per volta.** Se l'app e' gia' aperta - magari partita da sola
+all'accensione - aprirla di nuovo fa solo comparire la finestra di quella gia'
+attiva, invece di avviarne una seconda che copierebbe gli stessi file in
+parallelo.
 Chiudendo la finestra il programma resta nella tray vicino all'orologio: doppio
 clic per riaprirlo, tasto destro per il menu, *Esci* per chiuderlo davvero.
 
@@ -215,6 +227,7 @@ modello con tutti i valori di default e' [config.example.json](config.example.js
 | `stale_days` | `7` | Dopo quanti giorni avvisare di un disco non collegato; `0` lo spegne |
 | `include_fixed_drives` | `true` | Considera anche i dischi fissi non di sistema (molti SSD USB lo sono) |
 | `notify` | `true` | Notifica di sistema a fine giro |
+| `autostart` | `true` | Avvia l'app all'accesso, direttamente nella tray |
 | `run_on_start` | `true` | Accendendo la sorveglianza, lavora subito sui dischi gia' collegati |
 | `close_to_tray` | `true` | La X della finestra la manda nella tray invece di chiudere |
 | `start_minimized` | `false` | All'avvio parte direttamente nella tray |
@@ -300,13 +313,12 @@ In alternativa, sul PC dell'ufficio si puo' usare il sorgente con Python.
 python usb_backup.py --list       # PC, destinazione, piano e volumi visti adesso
 python usb_backup.py --once       # lavora sui volumi collegati ed esce
 python usb_backup.py --watch      # resta in ascolto (default)
-python usb_backup.py --install    # avvio automatico al login
+python usb_backup.py --install    # avvio automatico del solo watcher, senza app
 python usb_backup.py --uninstall
 ```
 
-L'avvio automatico usa un'attivita' pianificata su Windows e un LaunchAgent su
-macOS. Dall'eseguibile registra l'eseguibile stesso, che riprende a sorvegliare
-se l'interruttore era acceso. Su macOS la prima copia in Documenti, Scrivania o
+L'avvio automatico usa la chiave `Run` del registro utente su Windows e un
+LaunchAgent su macOS. Con l'app di solito non serve: si registra da sola. Su macOS la prima copia in Documenti, Scrivania o
 Download chiede il permesso di accesso ai file.
 
 ## Test

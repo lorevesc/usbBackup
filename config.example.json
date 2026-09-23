@@ -14,6 +14,7 @@
   "use_gitignore": false,
   "stale_days": 7,
   "language": "auto",
+  "autostart": true,
   "run_on_start": true,
   "close_to_tray": true,
   "start_minimized": false,

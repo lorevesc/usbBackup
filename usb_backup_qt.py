@@ -153,10 +153,23 @@ QComboBox QAbstractItemView {{ background: {C['card']}; border: 1px solid {C['li
 #logstate {{ color: {C['dim']}; font-size: 12px; }}
 
 /* ---------- tabella dello storico ---------- */
-QTableWidget {{ background: {C['input']}; border: 1px solid {C['line']};
-                border-radius: 10px; gridline-color: {C['line']};
-                selection-background-color: {C['accent_dk']}; }}
-QTableWidget::item {{ padding: 7px 10px; border: none; }}
+/* Lo stile nativo di Windows 11 dipinge la selezione a modo suo: testo nero
+   su fondo scuro e una barretta colorata in ogni cella. Qui si decide tutto
+   esplicitamente: righe normali, selezionate (con e senza focus), sotto il
+   mouse. Vale per la tabella dello Storico e per l'elenco dei dettagli. */
+QTableWidget, QTreeWidget {{
+    background: {C['input']}; color: {C['text']};
+    border: 1px solid {C['line']}; border-radius: 10px;
+    gridline-color: {C['line']}; outline: 0;
+    selection-background-color: #2d5aa0; selection-color: #ffffff;
+}}
+QTableWidget::item, QTreeWidget::item {{ padding: 7px 10px; border: none; }}
+QTableWidget::item:hover, QTreeWidget::item:hover {{ background: {C['card_hi']}; }}
+QTableWidget::item:selected, QTreeWidget::item:selected {{
+    background: #2d5aa0; color: #ffffff; border: none; }}
+QTableWidget::item:selected:!active, QTreeWidget::item:selected:!active {{
+    background: #26426f; color: #ffffff; }}
+QDialog {{ background: {C['panel']}; }}
 QHeaderView::section {{ background: {C['card_hi']}; color: {C['muted']};
                         border: none; border-bottom: 1px solid {C['line']};
                         padding: 8px 10px; font-size: 12px; font-weight: 600; }}
@@ -169,6 +182,9 @@ QScrollBar::handle:vertical {{ background: #333d4f; border-radius: 5px; min-heig
 QScrollBar::handle:vertical:hover {{ background: #414d63; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
+QScrollBar::handle:horizontal {{ background: #333d4f; border-radius: 5px; min-width: 30px; }}
+QScrollBar::handle:horizontal:hover {{ background: #414d63; }}
 
 /* ---------- maniglia del log ---------- */
 QSplitter#split::handle {{ background: {C['panel']}; }}
@@ -1258,12 +1274,13 @@ class Window(QMainWindow):
         auto = Card(t("Avvio automatico al login"),
                     t("Windows: attività pianificata ONLOGON, senza finestra.  "
                       "macOS: LaunchAgent caricato con launchctl."))
-        row = QHBoxLayout()
-        row.setSpacing(9)
-        row.addWidget(button(t("Installa"), "normal", lambda: self.autostart(True)))
-        row.addWidget(button(t("Rimuovi"), "ghost", lambda: self.autostart(False)))
-        row.addStretch(1)
-        auto.body.addLayout(row)
+        self.cfg_autostart = Switch(t("Avvia USB Backup all'accensione del computer"))
+        # clicked, non toggled: deve reagire al clic, non al caricamento dei valori
+        self.cfg_autostart.clicked.connect(self.set_autostart)
+        auto.body.addWidget(self.cfg_autostart)
+        auto.body.addSpacing(4)
+        auto.body.addWidget(label(t("Acceso di default. Parte direttamente nella tray, "
+                                    "senza aprire la finestra."), "hint"))
         lay.addWidget(auto)
 
         colleg = Card(t("Collegamenti"),
@@ -1271,7 +1288,11 @@ class Window(QMainWindow):
                         "finestra nera. Dal sorgente funzionano anche dove Windows "
                         "blocca l'eseguibile non firmato."))
         riga_c = QHBoxLayout()
-        riga_c.addWidget(button(t("Crea collegamenti"), "normal", self.make_shortcuts))
+        riga_c.setSpacing(9)
+        riga_c.addWidget(button(t("Collegamento nel menu Start"), "normal",
+                                lambda: self.make_shortcuts("Programs")))
+        riga_c.addWidget(button(t("Collegamento sul desktop"), "normal",
+                                lambda: self.make_shortcuts("Desktop")))
         riga_c.addStretch(1)
         colleg.body.addLayout(riga_c)
         lay.addWidget(colleg)
@@ -1747,6 +1768,7 @@ class Window(QMainWindow):
         self.cfg_versions.setChecked(bool(self.cfg.get("keep_versions", False)))
         self.cfg_low.setChecked(bool(self.cfg.get("low_priority", True)))
         self.cfg_notify_err.setChecked(bool(self.cfg.get("notify_errors", True)))
+        self.cfg_autostart.setChecked(bool(self.cfg.get("autostart", True)))
         self.cfg_verify.setText(str(self.cfg.get("verify_percent", 1)))
         indice = self.cfg_lingua.findData(str(self.cfg.get("language", "auto")))
         self.cfg_lingua.setCurrentIndex(max(0, indice))
@@ -1841,19 +1863,38 @@ class Window(QMainWindow):
         self.refresh_volumes()
         self.toast("Importato: controlla i percorsi nella scheda Questo PC", "ok")
 
-    def make_shortcuts(self):
-        fatti = ub.crea_collegamenti()
+    def make_shortcuts(self, luogo: str):
+        fatti = ub.crea_collegamenti(luoghi=(luogo,))
         if fatti:
-            self.toast(t("Collegamenti creati: ") + ", ".join(p.parent.name for p in fatti), "ok")
+            dove = t("nel menu Start") if luogo == "Programs" else t("sul desktop")
+            self.toast(t("Collegamento creato ") + dove, "ok")
         else:
             self.toast(t("Collegamenti non creati: guarda il log"), "err")
 
-    def autostart(self, install: bool):
-        rc = ub.install_autostart(gui=True) if install else ub.uninstall_autostart()
-        ub.log(f"[avvio automatico] {t('installato') if install else t('rimosso')} (codice {rc})")
-        self.toast("Avvio automatico " + (t("installato") if install else t("rimosso"))
-                   if rc == 0 else f"Operazione fallita (codice {rc})",
-                   "ok" if rc == 0 else "err")
+    def set_autostart(self, acceso: bool):
+        """L'interruttore e' stato toccato: salva la scelta e allinea il sistema."""
+        cfg = dict(self.cfg)
+        cfg["autostart"] = bool(acceso)
+        try:
+            ub.CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False),
+                                      encoding="utf-8")
+        except OSError as exc:
+            self.toast(t("Scrittura fallita: ") + str(exc), "err")
+            return
+        self.cfg = ub.load_config()
+        esito = ub.sync_autostart(self.cfg)
+        if esito == "errore":
+            self.toast(t("Operazione fallita (codice ") + "?)", "err")
+            self.cfg_autostart.setChecked(not acceso)
+        else:
+            self.toast(t("Avvio automatico ") + (t("installato") if acceso else t("rimosso")),
+                       "ok")
+
+    def sync_autostart_in_background(self):
+        """All'avvio: registra l'avvio automatico se manca o se il programma e'
+        stato spostato. In un thread, per non ritardare la finestra."""
+        threading.Thread(target=ub.sync_autostart, args=(dict(self.cfg),),
+                         daemon=True).start()
 
     # ------------------------------------------------------------------ run
     def backup_now(self):
@@ -2106,6 +2147,42 @@ def dark_titlebar(widget: QWidget) -> None:
         pass
 
 
+def nome_istanza() -> str:
+    """Un nome per utente: due utenti sullo stesso PC hanno ciascuno la sua app."""
+    utente = os.environ.get("USERNAME") or os.environ.get("USER") or "utente"
+    pulito = "".join(c for c in utente if c.isalnum()) or "utente"
+    return "usb-backup-" + pulito
+
+
+def avvisa_istanza_aperta(nome: str) -> bool:
+    """Se l'app e' gia' aperta le chiede di mostrarsi, e ritorna True.
+
+    Con l'avvio automatico acceso l'app parte da sola all'accensione: un doppio
+    clic sul collegamento ne aprirebbe una seconda, con due icone nella tray e
+    due giri paralleli sugli stessi file al collegamento di un disco.
+    """
+    from PySide6.QtNetwork import QLocalSocket
+    presa = QLocalSocket()
+    presa.connectToServer(nome)
+    if not presa.waitForConnected(400):
+        return False
+    presa.write(b"mostra")
+    presa.waitForBytesWritten(400)
+    presa.disconnectFromServer()
+    return True
+
+
+def ascolta_altre_aperture(nome: str, finestra) -> object:
+    """Resta in ascolto: una seconda apertura fa comparire questa finestra."""
+    from PySide6.QtNetwork import QLocalServer
+    server = QLocalServer(finestra)
+    QLocalServer.removeServer(nome)          # avanzo di un'istanza chiusa male
+    server.listen(nome)
+    server.newConnection.connect(
+        lambda: (server.nextPendingConnection(), finestra.show_from_tray()))
+    return server
+
+
 def main() -> int:
     if sys.platform == "win32":
         try:  # senza questo la barra delle applicazioni mostra l'icona di Python
@@ -2119,8 +2196,16 @@ def main() -> int:
     app.setFont(QFont(UIFONT, 10 if sys.platform == "win32" else 13))
     app.setWindowIcon(appicon.app_icon())
     app.setQuitOnLastWindowClosed(False)   # la tray tiene vivo il programma
+    nome = nome_istanza()
+    if avvisa_istanza_aperta(nome):
+        return 0                           # c'era gia': si e' mostrata lei
     window = Window()
-    in_tray = bool(window.cfg.get("start_minimized")) and window.tray is not None
+    window._server_istanza = ascolta_altre_aperture(nome, window)
+    # --tray arriva dall'avvio automatico; start_minimized vale anche a mano
+    richiesto = "--tray" in sys.argv or bool(window.cfg.get("start_minimized"))
+    in_tray = richiesto and window.tray is not None
+    if window.cfg.get("autostart", True):
+        window.sync_autostart_in_background()
     if not in_tray:
         window.show()
         dark_titlebar(window)

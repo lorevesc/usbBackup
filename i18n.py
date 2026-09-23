@@ -250,6 +250,7 @@ UI = {
     "Avvio automatico ": "Autostart ",
     "installato": "installed",
     "rimosso": "removed",
+    "non riuscito": "failed",
     "Operazione fallita (codice ": "Operation failed (code ",
 
     # --- scelta cartelle ---
@@ -276,6 +277,11 @@ UI = {
         "In the Start menu and on the desktop, with the app icon and no black window. "
         "From source they work even where Windows blocks the unsigned executable.",
     "Crea collegamenti": "Create shortcuts",
+    "Collegamento nel menu Start": "Start menu shortcut",
+    "Collegamento sul desktop": "Desktop shortcut",
+    "Collegamento creato ": "Shortcut created ",
+    "nel menu Start": "in the Start menu",
+    "sul desktop": "on the desktop",
     "Collegamenti creati: ": "Shortcuts created: ",
     "Collegamenti non creati: guarda il log": "Shortcuts not created: check the log",
     "Doppio clic su un giro per vederne i dettagli.":
@@ -300,6 +306,9 @@ UI = {
         "Puts the files back where they were. If something is already there, it goes "
         "to __versions: nothing is lost.",
     "Chiudi": "Close",
+    "Avvia USB Backup all'accensione del computer": "Start USB Backup when the computer starts",
+    "Acceso di default. Parte direttamente nella tray, senza aprire la finestra.":
+        "On by default. It starts straight into the tray, without opening the window.",
     "Ripristino": "Restore",
     "USB Backup: errori nell'ultimo giro": "USB Backup: errors in the last run",
 }
@@ -454,6 +463,7 @@ MESSAGGI = {
     "details.lost": ("(altri {n} eventi non registrati: il giro ne ha avuti troppi)",
                      "({n} more events not recorded: the run had too many)"),
     "restore.done": ("Ripristinati {n} file.", "Restored {n} files."),
+    "err.autostart": ("[errore] avvio automatico: {err}", "[error] autostart: {err}"),
     "summary": ("copiati {copiati} file ({mb} MB), invariati {invariati}, "
                 "in __deleted {cestinati}, errori {errori}, in {secondi}s",
                 "copied {copiati} files ({mb} MB), unchanged {invariati}, "

@@ -44,4 +44,23 @@ else:
 print("sorgente: pythonw (niente console) + usb_backup_qt.py, icona dell'app")
 
 shutil.rmtree(tmp, ignore_errors=True)
-print("\nCOLLEGAMENTI OK")
+
+# ---------------- un collegamento alla volta: Start oppure desktop ----------------
+catturati = []
+originale = ub.run_hidden
+def spia(comando, **kw):
+    catturati.append(kw.get("env", {}))
+    class Esito:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+    return Esito()
+ub.run_hidden = spia
+ub.crea_collegamenti(luoghi=("Programs",))
+ub.crea_collegamenti(luoghi=("Desktop",))
+ub.run_hidden = originale
+assert catturati[0]["UB_SPECIAL"] == "Programs" and catturati[0]["UB_DIRS"] == ""
+assert catturati[1]["UB_SPECIAL"] == "Desktop"
+print("un pulsante per il menu Start, uno per il desktop: ognuno crea solo il suo")
+print()
+print("COLLEGAMENTI OK")

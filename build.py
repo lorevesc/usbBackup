@@ -76,7 +76,6 @@ def main() -> int:
         "--paths", str(HERE),
         # fuori tutto cio' che non serve: l'eseguibile dimagrisce parecchio
         "--exclude-module", "tkinter",
-        "--exclude-module", "PySide6.QtNetwork",
         "--exclude-module", "PySide6.QtQml",
         "--exclude-module", "PySide6.QtQuick",
         "--exclude-module", "PySide6.Qt3DCore",
