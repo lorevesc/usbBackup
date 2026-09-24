@@ -73,6 +73,17 @@ assert ub.sync_autostart(cfg) == "installato"
 assert registro["attivita"] == atteso
 print("programma spostato: registrazione rifatta col percorso nuovo")
 
+# l'avvio automatico e' dell'eseguibile: aprire il sorgente non lo porta via
+exe = tmp / "exe miei" / "USB Backup.exe"
+exe.parent.mkdir()
+exe.write_bytes(b"MZ")
+registro["attivita"] = f'"{exe}" --tray'
+assert ub.sync_autostart(cfg) == "a posto"
+assert registro["attivita"] == f'"{exe}" --tray', "il sorgente ha rubato l'avvio all'exe"
+exe.unlink()                                   # exe cancellato: il sorgente si riprende l'avvio
+assert ub.sync_autostart(cfg) == "installato" and registro["attivita"] == atteso
+print("exe registrato: il sorgente lo lascia stare; exe sparito: si riregistra")
+
 # spento dall'utente: si toglie, e resta tolto
 cfg_spento = dict(cfg, autostart=False)
 assert ub.sync_autostart(cfg_spento) == "rimosso"

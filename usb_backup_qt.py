@@ -1168,6 +1168,7 @@ class Window(QMainWindow):
         self.pc_only = QPlainTextEdit()
         self.pc_only.setFixedHeight(72)
         self.pc_only.setPlaceholderText("chiavetta-lavoro\nKINGSTON*")
+        self.pc_only.textChanged.connect(self._aggiorna_nome_piano)
         ident.field(t("Applica solo a queste chiavette (una per riga, glob)"), self.pc_only,
                     t("Vuoto = tutte le chiavette rimovibili, mai i dischi fissi."))
 
@@ -1907,10 +1908,15 @@ class Window(QMainWindow):
         else:
             self.lbl_serial.setText(t("nessun vincolo"))
             self.lbl_serial.setStyleSheet(f"color:{C['dim']}")
-        if 0 <= self._piano_i < self.pc_scelta.count():
-            self.pc_scelta.setItemText(self._piano_i, self._nome_piano(
-                self._piano_i, {"only_serials": self._only_serials,
-                                "only_volumes": lines_of(self.pc_only.toPlainText())}))
+        self._aggiorna_nome_piano()
+
+    def _aggiorna_nome_piano(self):
+        """Il nome del piano nel menu segue subito filtro e vincolo, senza salvare."""
+        indice = getattr(self, "_piano_i", -1)
+        if 0 <= indice < self.pc_scelta.count():
+            self.pc_scelta.setItemText(indice, self._nome_piano(
+                indice, {"only_serials": getattr(self, "_only_serials", []),
+                         "only_volumes": lines_of(self.pc_only.toPlainText())}))
 
     def _nome_piano(self, indice: int, piano: dict) -> str:
         """"Piano 2  -  Ssd Esterno (1A2B-3C4D)": come appare nel menu."""
@@ -2081,7 +2087,40 @@ class Window(QMainWindow):
         self.toast(t("Piano del PC salvato"), "ok")
         self.refresh_volumes()
         self._riempi_scelta()
+        sovrapposti = self._piani_sovrapposti()
+        if sovrapposti:
+            QMessageBox.warning(
+                self, t("Piani sovrapposti"),
+                t("Su questi dischi partono piu' piani insieme: se mandano o prendono "
+                  "le stesse cartelle, si sovrappongono.") + "\n\n" + "\n".join(sovrapposti))
         return True
+
+    def _piani_sovrapposti(self) -> list[str]:
+        """Dischi su cui partirebbe piu' di un piano: stesso numero di serie in due
+        piani, o un disco collegato che due piani accettano entrambi."""
+        righe: list[str] = []
+        visti: set[str] = set()
+        piani = [dict(self._comuni, **p) for p in self._piani]
+        for v in self.volumes:
+            quali = [i for i, p in enumerate(piani)
+                     if ub.volume_matches(p, Path(v["path"]), v["label"], v["removable"])]
+            if len(quali) > 1:
+                righe.append(f"{v['label']}:  " + ", ".join(t("Piano ") + str(i + 1)
+                                                           for i in quali))
+                if v.get("serial"):
+                    visti.add(str(v["serial"]).upper())
+        per_serial: dict[str, list[int]] = {}
+        for i, piano in enumerate(piani):
+            serials = piano.get("only_serials") or []
+            if isinstance(serials, str):
+                serials = [serials]
+            for x in serials:
+                per_serial.setdefault(str(x).upper(), []).append(i)
+        for serial, quali in per_serial.items():
+            if len(quali) > 1 and serial not in visti:
+                righe.append(f"{serial}:  " + ", ".join(t("Piano ") + str(i + 1)
+                                                      for i in quali))
+        return righe
 
     def delete_pc_plan(self):
         target = ub.dest_root_of(self.cfg) / ub.MARKER_NAME

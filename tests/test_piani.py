@@ -156,4 +156,33 @@ assert len(salvato["piani"]) == 3 and salvato["piani"][2]["only_serials"] == ["0
 win.sw_watch.setChecked(False)
 print("guida: aggiorna il piano del disco scelto, per un disco nuovo ne aggiunge uno")
 
+# ---------------- nome nel menu subito aggiornato ----------------
+win.load_pc_plan()
+win.pc_scelta.setCurrentIndex(2)
+win.unbind_serial()
+win.pc_only.setPlainText("CHIAVETTA-NUOVA")
+assert "CHIAVETTA-NUOVA" in win.pc_scelta.itemText(2), win.pc_scelta.itemText(2)
+print("menu: il nome del piano segue il filtro mentre lo scrivi")
+
+# ---------------- piani sovrapposti: avviso al salvataggio ----------------
+avvisi = []
+qt.QMessageBox.warning = staticmethod(lambda *a, **k: avvisi.append(a[2]) or QMessageBox.Ok)
+win.pc_only.setPlainText("")
+win.bind_serial()                              # win.volume e' la KINGSTON: gia' nel piano 2
+assert win.save_pc_plan() is True
+assert avvisi and "KINGSTON" in avvisi[-1] and "2" in avvisi[-1] and "3" in avvisi[-1], avvisi
+avvisi.clear()
+win.unbind_serial()
+win.pc_only.setPlainText("NESSUNO")
+assert win.save_pc_plan() is True and not avvisi, avvisi
+print("sovrapposti: due piani sulla KINGSTON avvisano; separati, nessun avviso")
+
+# ---------------- riepilogo e notifica tradotti ----------------
+import i18n  # noqa: E402
+i18n.set_language("en")
+assert ub.tf("vol.part", nome="x", copiati=1, errori=0) == "x: 1 copied, 0 errors"
+assert "errors" in ub.tf("notify.body", n=1, mb="0.1", errori=0)
+i18n.set_language("it")
+print("riepilogo e notifica: in inglese niente italiano")
+
 print("\nPIANI OK")

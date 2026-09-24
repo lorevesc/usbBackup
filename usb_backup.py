@@ -2031,7 +2031,8 @@ def _handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
         for key in total:
             total[key] += stats[key]
     parts = " | ".join(
-        f"{name}: {s['copied']} copiati, {s['errors']} errori" for name, s in results)
+        tf("vol.part", nome=name, copiati=s["copied"], errori=s["errors"])
+        for name, s in results)
     log(tf("vol.summary", label=label, parts=parts))
 
     eventi: list[dict] = []
@@ -2073,8 +2074,8 @@ def _handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
             pass
     if cfg.get("notify"):
         mb = total["bytes"] / (1024 * 1024)
-        notify(f"Backup {label}",
-               f"{total['copied']} file ({mb:.1f} MB), {total['errors']} errori")
+        notify(tf("notify.title", volume=label),
+               tf("notify.body", n=total["copied"], mb=f"{mb:.1f}", errori=total["errors"]))
     return True
 
 
@@ -2526,6 +2527,21 @@ def autostart_registrato() -> str | None:
     return None
 
 
+def _exe_registrato(comando: str | None) -> bool:
+    """Il comando registrato lancia un eseguibile del programma che esiste ancora?"""
+    if not comando:
+        return False
+    comando = comando.strip()
+    if comando.startswith('"'):
+        primo = comando[1:].split('"', 1)[0]
+    else:
+        primo = comando.split(" ", 1)[0]
+    percorso = Path(primo)
+    if percorso.name.lower().startswith("python"):
+        return False                  # e' il sorgente lanciato con python/pythonw
+    return percorso.suffix.lower() == ".exe" and percorso.is_file()
+
+
 def sync_autostart(cfg: dict) -> str:
     """Allinea l'avvio automatico a quello che dice la configurazione.
 
@@ -2543,6 +2559,10 @@ def sync_autostart(cfg: dict) -> str:
         return "rimosso"
     atteso = launch_command(gui=True)
     if attuale is not None and _normalizza_comando(attuale) == _normalizza_comando(atteso):
+        return "a posto"
+    if not getattr(sys, "frozen", False) and _exe_registrato(attuale):
+        # l'avvio automatico e' dell'eseguibile, che esiste ancora: aprire il
+        # sorgente per provare qualcosa non deve portarglielo via
         return "a posto"
     codice = install_autostart(gui=True)
     # "installato" solo se e' vero: prima il log lo diceva anche quando il

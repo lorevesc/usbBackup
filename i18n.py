@@ -13,6 +13,8 @@ _lingua = "it"
 # interfaccia
 # --------------------------------------------------------------------------
 UI = {
+    'Piani sovrapposti': 'Overlapping plans',
+    "Su questi dischi partono piu' piani insieme: se mandano o prendono le stesse cartelle, si sovrappongono.": 'More than one plan runs on these disks: if they send or fetch the same folders, they overlap.',
     'Piani di questo PC': 'Plans on this PC',
     "Un piano per disco: cosa mandare e cosa prendere. Legali al numero di serie, cosi' ogni disco fa solo il suo.": 'One plan per disk: what to send and what to fetch. Bind them to the serial number so each disk only does its own.',
     '+  Nuovo piano': '+  New plan',
@@ -451,6 +453,10 @@ MESSAGGI = {
                      "[skip] {root}: already handled {quando} ago (resting {minuti} min)"),
     "vol.unreadable": ("[salto] {root} non leggibile", "[skip] {root} unreadable"),
     "vol.summary": ("[volume {label}] {parts}", "[volume {label}] {parts}"),
+    "vol.part": ("{nome}: {copiati} copiati, {errori} errori",
+                 "{nome}: {copiati} copied, {errori} errors"),
+    "notify.title": ("Backup {volume}", "Backup {volume}"),
+    "notify.body": ("{n} file ({mb} MB), {errori} errori", "{n} files ({mb} MB), {errori} errors"),
     "vol.nothing": ("[attenzione] {root}: niente da fare - nessun backup.json sulla "
                     "chiavetta e il piano del PC non si applica",
                     "[warning] {root}: nothing to do - no backup.json on the drive and "
