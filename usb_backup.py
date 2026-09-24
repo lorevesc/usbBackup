@@ -1102,6 +1102,43 @@ def read_pc_plan(cfg: dict) -> dict | None:
     return read_json_file(dest_root_of(cfg) / MARKER_NAME)
 
 
+# Il file del PC puo' avere un piano solo (formato di sempre) o piu' piani,
+# uno per disco:  {"pc_name": ..., "piani": [{"only_serials": [...], "push": ...}, ...]}
+# Le chiavi fuori da "piani" valgono per tutti; qui sotto quelle che nel
+# formato a piano unico sono comuni e non del piano.
+CHIAVI_COMUNI = ("pc_name",)
+
+
+def dividi_piani(file: dict | None) -> tuple[dict, list[dict]]:
+    """(chiavi comuni, elenco dei piani) da un file del PC, in tutti e due i formati."""
+    if not file:
+        return {}, []
+    if isinstance(file.get("piani"), list):
+        comuni = {k: v for k, v in file.items() if k != "piani"}
+        return comuni, [dict(p) for p in file["piani"] if isinstance(p, dict)]
+    comuni = {k: file[k] for k in CHIAVI_COMUNI if k in file}
+    return comuni, [{k: v for k, v in file.items() if k not in CHIAVI_COMUNI}]
+
+
+def unisci_piani(comuni: dict, piani: list[dict]) -> dict:
+    """Il contrario di dividi_piani. Con un piano solo si scrive il formato di
+    sempre, che anche le versioni vecchie del programma sanno leggere."""
+    if len(piani) == 1:
+        return dict(comuni, **piani[0])
+    return dict(comuni, piani=piani)
+
+
+def piani_del_pc(file: dict | None) -> list[dict]:
+    """Ogni piano completo delle chiavi comuni: pronto per volume_matches e i run_*."""
+    comuni, piani = dividi_piani(file)
+    return [dict(comuni, **p) for p in piani]
+
+
+def piani_per_volume(cfg: dict, root: Path, label: str, removable: bool) -> list[dict]:
+    return [p for p in piani_del_pc(read_pc_plan(cfg))
+            if volume_matches(p, root, label, removable)]
+
+
 def resolve_entries(spec: dict, absolute: bool) -> list[tuple[str, str]]:
     """Ritorna [(percorso sorgente, nome cartella di destinazione)].
 
@@ -1330,7 +1367,9 @@ def import_settings(percorso: Path, cfg: dict) -> tuple[dict, dict]:
         if chiave not in CHIAVI_LOCALI:
             nuova[chiave] = valore
     piano = dict(dati.get("piano") or {})
-    # il vincolo al disco e il nome del PC appartengono all'altra macchina
+    # il vincolo al disco e il nome del PC appartengono all'altra macchina.
+    # Con piu' piani invece il numero di serie e' proprio cio' che li distingue
+    # (ed e' del disco, non del PC): quelli dentro "piani" restano.
     piano.pop("only_serials", None)
     piano.pop("pc_name", None)
     return nuova, piano
@@ -1969,8 +2008,7 @@ def _handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
         if res:
             results.append(res)
 
-    plan = read_pc_plan(cfg)
-    if plan and volume_matches(plan, root, label, removable) and not stop_requested():
+    for plan in piani_per_volume(cfg, root, label, removable):
         pc = machine_name(plan)
         for runner in (run_sync, run_pull, run_push):
             if stop_requested() or not os.path.exists(L(root)):
@@ -2245,8 +2283,7 @@ def coppie_del_volume(root: Path, cfg: dict, removable: bool = True) -> list[tup
             coppie.append((nome, root / rel if rel else root,
                            base / alias if alias else base, _excludes_for(cfg, spec)))
 
-    piano = read_pc_plan(cfg)
-    if piano and volume_matches(piano, root, volume_label(root), removable):
+    for piano in piani_per_volume(cfg, root, volume_label(root), removable):
         pc = machine_name(piano)
         pull = piano.get("pull") or {}
         if pull.get("folders"):
@@ -2574,11 +2611,15 @@ def uninstall_autostart() -> int:
 def cmd_list(cfg: dict) -> int:
     plan = read_pc_plan(cfg)
     pc = machine_name(plan)
+    piani = piani_del_pc(plan)
     print(f"PC: {pc}")
     print(f"dest_root: {dest_root_of(cfg)}")
     if plan:
-        sezioni = [s for s in ("push", "pull") if plan.get(s)]
-        print(f"piano PC: {dest_root_of(cfg) / MARKER_NAME} (sezioni: {', '.join(sezioni) or 'nessuna'})")
+        print(f"piano PC: {dest_root_of(cfg) / MARKER_NAME} ({len(piani)} piani)")
+        for n, piano in enumerate(piani, 1):
+            sezioni = [s for s in ("push", "pull", "sync") if piano.get(s)]
+            filtro = piano.get("only_serials") or piano.get("only_volumes") or "chiavette rimovibili"
+            print(f"  {n}. {filtro}: {', '.join(sezioni) or 'nessuna sezione'}")
     else:
         print(f"piano PC: assente ({dest_root_of(cfg) / MARKER_NAME})")
     print("-" * 60)
@@ -2591,8 +2632,9 @@ def cmd_list(cfg: dict) -> int:
         flags = []
         flags.append("rimovibile" if removable else "fisso")
         flags.append("backup.json OK" if (root / MARKER_NAME).is_file() else "no backup.json")
-        if plan and volume_matches(plan, root, label, removable):
-            flags.append("piano PC applicabile")
+        quanti = sum(volume_matches(p, root, label, removable) for p in piani)
+        if quanti:
+            flags.append("piano PC applicabile" if quanti == 1 else f"{quanti} piani PC applicabili")
         print(f"{root}\t{label}\t{', '.join(flags)}")
     return 0
 

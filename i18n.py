@@ -13,6 +13,18 @@ _lingua = "it"
 # interfaccia
 # --------------------------------------------------------------------------
 UI = {
+    'Piani di questo PC': 'Plans on this PC',
+    "Un piano per disco: cosa mandare e cosa prendere. Legali al numero di serie, cosi' ogni disco fa solo il suo.": 'One plan per disk: what to send and what to fetch. Bind them to the serial number so each disk only does its own.',
+    '+  Nuovo piano': '+  New plan',
+    'Togli questo piano': 'Remove this plan',
+    'Vuoto = hostname. È il nome della cartella creata sulla chiavetta. Vale per tutti i piani.': "Empty = hostname. It's the name of the folder created on the drive. Shared by all plans.",
+    'Elimina tutti i piani': 'Delete all plans',
+    'tutte le chiavette rimovibili': 'all removable drives',
+    'Piano ': 'Plan ',
+    'Nuovo piano: scegli le cartelle e premi Salva': 'New plan: pick the folders and press Save',
+    'Togliere ': 'Remove ',
+    'Piano tolto: premi Salva per confermare': 'Plan removed: press Save to confirm',
+    'Windows: chiave Run del registro utente, senza privilegi di amministratore.  macOS: LaunchAgent.': 'Windows: Run key in the user registry, no admin rights needed.  macOS: LaunchAgent.',
     # --- barra laterale e testate ---
     "USB Backup": "USB Backup",
     "Chiavette": "Drives",

@@ -745,20 +745,42 @@ class PrimoAvvio(QDialog):
         disco = self.disco()
         if not disco:
             return
-        piano = dict(ub.read_pc_plan(self.finestra.cfg) or {})
-        if disco.get("serial"):
-            piano["only_serials"] = [disco["serial"]]
+        comuni, piani = ub.dividi_piani(ub.read_pc_plan(self.finestra.cfg))
+        serial = disco.get("serial") or ""
+
+        def dello_stesso_disco(p: dict) -> bool:
+            if serial:
+                return serial in (p.get("only_serials") or [])
+            return disco["label"] in (p.get("only_volumes") or [])
+
+        indice = next((i for i, p in enumerate(piani) if dello_stesso_disco(p)), None)
+        if indice is None:
+            # un piano unico senza filtro era pensato per "il disco": lo si lega
+            # a questo. Se invece ci sono gia' piani per altri dischi, se ne aggiunge uno.
+            if len(piani) == 1 and not (piani[0].get("only_serials")
+                                        or piani[0].get("only_volumes")):
+                indice = 0
+            else:
+                piani.append({})
+                indice = len(piani) - 1
+        piano = piani[indice]
+        if serial:
+            piano["only_serials"] = [serial]
         else:
             piano["only_volumes"] = [disco["label"]]
         push = folders_to_json(self.cartelle_push.get_rows())
         pull = folders_to_json(self.cartelle_pull.get_rows())
         if push:
-            piano["push"] = {"folders": push, "target_subdir": "backup", "delete_extra": False}
+            # rifatta la guida su un disco gia' configurato, le opzioni scelte restano
+            piano["push"] = {"target_subdir": "backup", "delete_extra": False,
+                             **(piano.get("push") or {}), "folders": push}
         if pull:
-            piano["pull"] = {"folders": pull, "delete_extra": False}
+            piano["pull"] = {"delete_extra": False, **(piano.get("pull") or {}),
+                             "folders": pull}
         destinazione = ub.dest_root_of(self.finestra.cfg) / ub.MARKER_NAME
         destinazione.parent.mkdir(parents=True, exist_ok=True)
-        destinazione.write_text(json.dumps(piano, indent=2, ensure_ascii=False), encoding="utf-8")
+        destinazione.write_text(json.dumps(ub.unisci_piani(comuni, piani), indent=2,
+                                           ensure_ascii=False), encoding="utf-8")
         cfg = dict(self.finestra.cfg, wizard_done=True)
         ub.CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
         self.finestra.cfg = ub.load_config()
@@ -1121,13 +1143,28 @@ class Window(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(16)
 
+        scelta = Card(t("Piani di questo PC"),
+                      t("Un piano per disco: cosa mandare e cosa prendere. Legali al "
+                        "numero di serie, cosi' ogni disco fa solo il suo."))
+        riga_piani = QHBoxLayout()
+        riga_piani.setSpacing(9)
+        self.pc_scelta = QComboBox()
+        self.pc_scelta.currentIndexChanged.connect(self._cambia_piano)
+        riga_piani.addWidget(self.pc_scelta, 1)
+        riga_piani.addWidget(button(t("+  Nuovo piano"), "normal", self.nuovo_piano))
+        self.btn_togli_piano = button(t("Togli questo piano"), "ghost", self.togli_piano)
+        riga_piani.addWidget(self.btn_togli_piano)
+        scelta.body.addLayout(riga_piani)
+        lay.addWidget(scelta)
+
         ident = Card(t("Identità e filtro"), "—")
         self.pc_card = ident
         self.pc_name = QLineEdit()
         self.pc_name.setPlaceholderText(ub.machine_name())
         self.pc_name.textChanged.connect(self.update_pc_dest)
         ident.field(t("Nome di questo PC"), self.pc_name,
-                    t("Vuoto = hostname. È il nome della cartella creata sulla chiavetta."))
+                    t("Vuoto = hostname. È il nome della cartella creata sulla chiavetta. "
+                      "Vale per tutti i piani."))
         self.pc_only = QPlainTextEdit()
         self.pc_only.setFixedHeight(72)
         self.pc_only.setPlaceholderText("chiavetta-lavoro\nKINGSTON*")
@@ -1221,7 +1258,7 @@ class Window(QMainWindow):
         bar.addWidget(button(t("Salva piano del PC"), "primary", self.save_pc_plan))
         bar.addWidget(button(t("Ricarica"), "ghost", self.load_pc_plan))
         bar.addStretch(1)
-        bar.addWidget(button(t("Elimina piano del PC"), "danger", self.delete_pc_plan))
+        bar.addWidget(button(t("Elimina tutti i piani"), "danger", self.delete_pc_plan))
         pull.body.addSpacing(20)
         pull.body.addLayout(bar)
         lay.addWidget(pull)
@@ -1472,8 +1509,8 @@ class Window(QMainWindow):
         lay.addWidget(card)
 
         auto = Card(t("Avvio automatico al login"),
-                    t("Windows: attività pianificata ONLOGON, senza finestra.  "
-                      "macOS: LaunchAgent caricato con launchctl."))
+                    t("Windows: chiave Run del registro utente, senza privilegi di "
+                      "amministratore.  macOS: LaunchAgent."))
         self.cfg_autostart = Switch(t("Avvia USB Backup all'accensione del computer"))
         # clicked, non toggled: deve reagire al clic, non al caricamento dei valori
         self.cfg_autostart.clicked.connect(self.set_autostart)
@@ -1651,7 +1688,8 @@ class Window(QMainWindow):
                 "path": str(root), "label": name, "removable": removable,
                 "serial": ub.volume_serial(root),
                 "has_plan": (root / ub.MARKER_NAME).is_file(),
-                "pc_plan": bool(plan and ub.volume_matches(plan, root, name, removable)),
+                "pc_plan": any(ub.volume_matches(p, root, name, removable)
+                               for p in ub.piani_del_pc(plan)),
             })
 
         while self.vol_grid.count():
@@ -1869,12 +1907,52 @@ class Window(QMainWindow):
         else:
             self.lbl_serial.setText(t("nessun vincolo"))
             self.lbl_serial.setStyleSheet(f"color:{C['dim']}")
+        if 0 <= self._piano_i < self.pc_scelta.count():
+            self.pc_scelta.setItemText(self._piano_i, self._nome_piano(
+                self._piano_i, {"only_serials": self._only_serials,
+                                "only_volumes": lines_of(self.pc_only.toPlainText())}))
+
+    def _nome_piano(self, indice: int, piano: dict) -> str:
+        """"Piano 2  -  Ssd Esterno (1A2B-3C4D)": come appare nel menu."""
+        serials = piano.get("only_serials") or []
+        if isinstance(serials, str):
+            serials = [serials]
+        only = piano.get("only_volumes") or []
+        if isinstance(only, str):
+            only = [only]
+        if serials:
+            quale = str(serials[0])
+            nome = next((v["label"] for v in getattr(self, "volumes", [])
+                         if v.get("serial") == quale), "")
+            dove = f"{nome}  ({quale})" if nome else quale
+        elif only:
+            dove = ", ".join(str(o) for o in only)
+        else:
+            dove = t("tutte le chiavette rimovibili")
+        return t("Piano ") + f"{indice + 1}  -  {dove}"
+
+    def _riempi_scelta(self):
+        self.pc_scelta.blockSignals(True)
+        self.pc_scelta.clear()
+        for indice, piano in enumerate(self._piani):
+            self.pc_scelta.addItem(self._nome_piano(indice, piano))
+        self.pc_scelta.setCurrentIndex(self._piano_i)
+        self.pc_scelta.blockSignals(False)
+        self.btn_togli_piano.setEnabled(len(self._piani) > 1)
 
     def load_pc_plan(self):
-        plan = ub.read_pc_plan(self.cfg) or {}
+        comuni, piani = ub.dividi_piani(ub.read_pc_plan(self.cfg))
+        self._comuni = comuni
+        self._piani = piani or [{}]
+        self._piano_i = 0
+        self.pc_name.setText(str(comuni.get("pc_name") or ""))
+        self._riempi_scelta()
+        self._carica_piano(self._piani[0])
+
+    def _carica_piano(self, plan: dict):
+        """Mette nei campi un piano; il nome del PC e' comune e non si tocca."""
         push = plan.get("push") or {}
         pull = plan.get("pull") or {}
-        self.pc_name.setText(str(plan.get("pc_name") or ""))
         only = plan.get("only_volumes") or []
         if isinstance(only, str):
             only = [only]
@@ -1896,22 +1974,26 @@ class Window(QMainWindow):
         self.pull_delete.setChecked(bool(pull.get("delete_extra", False)))
         self.update_pc_dest()
 
-    def save_pc_plan(self) -> bool:
-        plan: dict = {}
-        name = self.pc_name.text().strip()
-        if name:
-            plan["pc_name"] = name
+    def _raccogli_piano(self) -> dict:
+        """Il piano mostrato, letto dai campi. Parte da quello salvato, cosi'
+        le chiavi che l'app non mostra (sync, use_pc_folder...) non si perdono."""
+        plan = dict(self._piani[self._piano_i])
+        vecchio_push = dict(plan.pop("push", None) or {})
+        vecchio_pull = dict(plan.pop("pull", None) or {})
+        plan.pop("only_volumes", None)
+        plan.pop("only_serials", None)
         only = lines_of(self.pc_only.toPlainText())
         if only:
             plan["only_volumes"] = only
         if self._only_serials:
-            plan["only_serials"] = self._only_serials
+            plan["only_serials"] = list(self._only_serials)
 
         push_rows = folders_to_json(self.push_folders.get_rows())
         if push_rows:
-            push = {"folders": push_rows,
-                    "target_subdir": self.push_subdir.text().strip() or "backup",
-                    "delete_extra": self.push_delete.isChecked()}
+            push = dict(vecchio_push, folders=push_rows,
+                        target_subdir=self.push_subdir.text().strip() or "backup",
+                        delete_extra=self.push_delete.isChecked())
+            push.pop("exclude", None)
             exclude = lines_of(self.push_exclude.toPlainText())
             if exclude:
                 push["exclude"] = exclude
@@ -1919,7 +2001,10 @@ class Window(QMainWindow):
 
         pull_rows = folders_to_json(self.pull_folders.get_rows())
         if pull_rows:
-            pull = {"folders": pull_rows, "delete_extra": self.pull_delete.isChecked()}
+            pull = dict(vecchio_pull, folders=pull_rows,
+                        delete_extra=self.pull_delete.isChecked())
+            pull.pop("dest", None)
+            pull.pop("exclude", None)
             dest = self.pull_dest.text().strip()
             if dest:
                 pull["dest"] = dest
@@ -1927,21 +2012,75 @@ class Window(QMainWindow):
             if exclude:
                 pull["exclude"] = exclude
             plan["pull"] = pull
+        return plan
 
-        if not push_rows and not pull_rows:
-            self.toast(t("Aggiungi almeno una cartella in Push o in Pull"), "err")
-            return False
+    def _cambia_piano(self, indice: int):
+        if indice < 0 or indice == self._piano_i or indice >= len(self._piani):
+            return
+        self._piani[self._piano_i] = self._raccogli_piano()
+        self._piano_i = indice
+        self._carica_piano(self._piani[indice])
+        self._riempi_scelta()
+
+    def nuovo_piano(self):
+        """Un piano in piu', gia' legato al disco selezionato se nessun altro lo e'."""
+        self._piani[self._piano_i] = self._raccogli_piano()
+        nuovo: dict = {}
+        serial = (self.volume or {}).get("serial") or ""
+        usati = {str(x) for p in self._piani for x in (p.get("only_serials") or [])}
+        if serial and serial not in usati:
+            nuovo["only_serials"] = [serial]
+        self._piani.append(nuovo)
+        self._piano_i = len(self._piani) - 1
+        self._riempi_scelta()
+        self._carica_piano(nuovo)
+        self.toast(t("Nuovo piano: scegli le cartelle e premi Salva"), "ok")
+
+    def togli_piano(self):
+        if len(self._piani) < 2:
+            return
+        if QMessageBox.question(self, t("Conferma"),
+                                t("Togliere ") + self.pc_scelta.currentText() + "?") \
+                != QMessageBox.Yes:
+            return
+        del self._piani[self._piano_i]
+        self._piano_i = 0
+        self._riempi_scelta()
+        self._carica_piano(self._piani[0])
+        self.toast(t("Piano tolto: premi Salva per confermare"))
+
+    def save_pc_plan(self) -> bool:
+        self._piani[self._piano_i] = self._raccogli_piano()
+        for indice, piano in enumerate(self._piani):
+            if not ((piano.get("push") or {}).get("folders")
+                    or (piano.get("pull") or {}).get("folders") or piano.get("sync")):
+                if indice != self._piano_i:
+                    self._piano_i = indice
+                    self._riempi_scelta()
+                    self._carica_piano(piano)
+                self.toast(t("Aggiungi almeno una cartella in Push o in Pull")
+                           + "  (" + self._nome_piano(indice, piano) + ")", "err")
+                return False
+
+        comuni = dict(self._comuni)
+        comuni.pop("pc_name", None)
+        name = self.pc_name.text().strip()
+        if name:
+            comuni = dict({"pc_name": name}, **comuni)
+        contenuto = ub.unisci_piani(comuni, self._piani)
 
         target = ub.dest_root_of(self.cfg) / ub.MARKER_NAME
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
+            target.write_text(json.dumps(contenuto, indent=2, ensure_ascii=False), encoding="utf-8")
         except OSError as exc:
             self.toast(t("Scrittura fallita: ") + str(exc), "err")
             return False
+        self._comuni = comuni
         ub.log(tf("saved", path=target))
         self.toast(t("Piano del PC salvato"), "ok")
         self.refresh_volumes()
+        self._riempi_scelta()
         return True
 
     def delete_pc_plan(self):

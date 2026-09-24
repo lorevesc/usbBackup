@@ -249,6 +249,29 @@ Esempio: [pc-backup.example.json](pc-backup.example.json).
 | `pull.dest` | Dove farle atterrare. Default `~/Backup/<nome del disco>`. |
 | `exclude`, `delete_extra` | Come sopra, per sezione. |
 
+**Un piano per disco.** Per mandare e prendere cartelle diverse da dischi
+diversi, i piani vanno in `piani`, ognuno legato al suo disco. Le chiavi fuori
+da `piani` (come `pc_name`) valgono per tutti:
+
+```json
+{
+  "pc_name": "pc-studio",
+  "piani": [
+    {"only_serials": ["1A2B-3C4D"],
+     "push": {"folders": ["C:\\WorkArea"], "delete_extra": true},
+     "pull": {"folders": ["Codice"]}},
+    {"only_serials": ["9F8E-7D6C"],
+     "push": {"folders": ["~/Documents"]}}
+  ]
+}
+```
+
+Collegando un disco partono tutti i piani che gli si applicano. Nell'app, in
+*Questo PC*, il menu in cima sceglie il piano da modificare; *Nuovo piano* ne
+aggiunge uno gia' legato al disco selezionato. Con un piano solo il file resta
+nel formato di sempre. La configurazione guidata aggiorna il piano del disco
+scelto, o ne aggiunge uno se quel disco non ne ha.
+
 ### `config.json`
 
 Accanto al programma, scritto dall'applicazione. Non e' nel repository: il
