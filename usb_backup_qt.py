@@ -353,8 +353,11 @@ class Card(QFrame):
         else:
             self.sub = label(subtitle, "cardSub")
             self.sub.setWordWrap(True)
-        self.sub.setVisible(bool(subtitle))
+        # prima nel layout, poi visibile: setVisible(True) su un widget ancora
+        # senza genitore lo apre come finestra a se', per un attimo (all'avvio
+        # nella tray comparivano e sparivano dodici finestrelle)
         outer.addWidget(self.sub)
+        self.sub.setVisible(bool(subtitle))
         outer.addSpacing(10)
 
         self.body = QVBoxLayout()
