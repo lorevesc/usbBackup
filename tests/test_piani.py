@@ -177,6 +177,23 @@ win.pc_only.setPlainText("NESSUNO")
 assert win.save_pc_plan() is True and not avvisi, avvisi
 print("sovrapposti: due piani sulla KINGSTON avvisano; separati, nessun avviso")
 
+# ---------------- solo i dischi indicati ----------------
+# il caso vero: filtro col nome del disco piu' la lettera "D:\", e quel giorno
+# la lettera l'aveva un altro hard disk. Non deve ricevere niente.
+estraneo = tmp / "ESTRANEO"
+estraneo.mkdir()
+SERIALI[str(estraneo)] = "5E5E-0A0A"
+file_pc.write_text(json.dumps({"only_volumes": ["Ssd Esterno", "D:" + chr(92), str(estraneo)],
+                               "push": {"folders": [str(lavoro)]}}), encoding="utf-8")
+ub.handle_volume(estraneo, cfg, False)
+ub.handle_volume(estraneo, cfg, True)
+assert not (estraneo / "backup").exists(), "il piano e' partito su un disco non indicato"
+file_pc.write_text(json.dumps({"push": {"folders": [str(lavoro)]}}), encoding="utf-8")
+ub.handle_volume(estraneo, cfg, True)
+assert not (estraneo / "backup").exists(), "piano senza disco partito su una chiavetta qualsiasi"
+assert list(estraneo.iterdir()) == [], list(estraneo.iterdir())
+print("solo i dischi indicati: ne' per lettera ne' senza filtro il piano parte su un altro disco")
+
 # ---------------- riepilogo e notifica tradotti ----------------
 import i18n  # noqa: E402
 i18n.set_language("en")

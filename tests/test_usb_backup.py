@@ -37,6 +37,7 @@ pcfolder = home / "Progetti"
 dest.mkdir(parents=True)
 (dest / "backup.json").write_text(json.dumps({
     "pc_name": "PC-TEST",
+    "only_volumes": ["chiavetta-test"],
     "push": {"folders": [str(pcfolder)], "exclude": ["__pycache__"]},
     "pull": {"folders": ["foto"]},
 }), encoding="utf-8")
@@ -105,6 +106,15 @@ plan = {"only_volumes": ["ALTRA*"], "push": {"folders": ["x"]}}
 assert ub.volume_matches(plan, stick, "chiavetta-test", True) is False
 assert ub.volume_matches(plan, stick, "ALTRA-CHIAVE", True) is True
 assert ub.volume_matches({"push": {}}, stick, "x", removable=False) is False
+# senza un disco indicato il piano non parte da nessuna parte, nemmeno sulle rimovibili
+assert ub.volume_matches({"push": {}}, stick, "x", removable=True) is False
+# la lettera di unita' non e' un disco: "D:\\" non deve valere per chi oggi e' D:
+per_lettera = {"only_volumes": [str(stick), "D:\\", "D:"], "push": {"folders": ["x"]}}
+assert ub.volume_matches(per_lettera, stick, "chiavetta-test", True) is False
+assert ub.piano_senza_disco(per_lettera) and ub.piano_senza_disco({"push": {}})
+assert not ub.piano_senza_disco({"only_volumes": ["Ssd Esterno", "D:\\"]})
+assert ub.volume_matches({"only_volumes": ["Ssd Esterno", "D:\\"]}, stick, "Volume", False) is False
+assert ub.volume_matches({"only_volumes": ["Ssd Esterno", "D:\\"]}, stick, "Ssd Esterno", False) is True
 
 # --- no loop: pull non risucchia il push ------------------------------------
 assert not (dest / "chiavetta-test" / "backup").exists(), "pull ha ripreso i dati del push"

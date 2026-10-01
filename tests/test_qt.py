@@ -45,7 +45,14 @@ win.push_folders.set_rows([{"path": str(locale), "as": "progetto"}])
 win.pull_folders.set_rows([{"path": "backup/pc-casa/progetto", "as": "progetto"}])
 win.pull_dest.setText(str(staging))
 win.pull_delete.setChecked(True)
+avvisi = []
+toast_vero = win.toast
+win.toast = lambda testo, variante="": avvisi.append(variante)
+assert win.save_pc_plan() is False and avvisi[-1] == "err", "salvato un piano senza disco"
+win.pc_only.setPlainText("KINGSTON\nD:\\")       # la lettera viene tolta, il nome resta
 assert win.save_pc_plan() is True
+win.toast = toast_vero
+assert json.loads((dest / "backup.json").read_text(encoding="utf-8"))["only_volumes"] == ["KINGSTON"]
 
 plan = json.loads((dest / "backup.json").read_text(encoding="utf-8"))
 assert plan["pull"]["dest"] == str(staging), plan

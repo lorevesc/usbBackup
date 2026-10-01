@@ -1172,8 +1172,9 @@ class Window(QMainWindow):
         self.pc_only.setFixedHeight(72)
         self.pc_only.setPlaceholderText("chiavetta-lavoro\nKINGSTON*")
         self.pc_only.textChanged.connect(self._aggiorna_nome_piano)
-        ident.field(t("Applica solo a queste chiavette (una per riga, glob)"), self.pc_only,
-                    t("Vuoto = tutte le chiavette rimovibili, mai i dischi fissi."))
+        ident.field(t("Applica solo ai dischi con questo nome (uno per riga, glob)"), self.pc_only,
+                    t("Vuoto = il piano non parte: va indicato almeno un disco. "
+                      "Solo il nome, non la lettera (D:)."))
 
         riga = QWidget()
         lega = QHBoxLayout(riga)
@@ -1937,7 +1938,7 @@ class Window(QMainWindow):
         elif only:
             dove = ", ".join(str(o) for o in only)
         else:
-            dove = t("tutte le chiavette rimovibili")
+            dove = t("nessun disco")
         return t("Piano ") + f"{indice + 1}  -  {dove}"
 
     def _riempi_scelta(self):
@@ -1992,6 +1993,11 @@ class Window(QMainWindow):
         plan.pop("only_volumes", None)
         plan.pop("only_serials", None)
         only = lines_of(self.pc_only.toPlainText())
+        lettere = [x for x in only if ub.filtro_per_lettera(x)]
+        if lettere:
+            only = [x for x in only if x not in lettere]
+            self.toast(t("La lettera di unita' non identifica un disco: tolta dal filtro ")
+                       + ", ".join(lettere), "err")
         if only:
             plan["only_volumes"] = only
         if self._only_serials:
@@ -2069,6 +2075,15 @@ class Window(QMainWindow):
                     self._carica_piano(piano)
                 self.toast(t("Aggiungi almeno una cartella in Push o in Pull")
                            + "  (" + self._nome_piano(indice, piano) + ")", "err")
+                return False
+        for indice, piano in enumerate(self._piani):
+            if ub.piano_senza_disco(piano):
+                if indice != self._piano_i:
+                    self._piano_i = indice
+                    self._riempi_scelta()
+                    self._carica_piano(piano)
+                self.toast(t("Indica su quale disco lavora questo piano: legalo al disco "
+                             "selezionato, o scrivi il nome del disco"), "err")
                 return False
 
         comuni = dict(self._comuni)

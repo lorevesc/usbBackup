@@ -1189,17 +1189,35 @@ def volume_matches(plan: dict, root: Path, label: str, removable: bool) -> bool:
         mio = volume_serial(root).upper()
         return bool(mio) and any(mio == str(x).upper().strip() for x in serials)
 
-    patterns = plan.get("only_volumes")
+    # Solo l'etichetta. La lettera di unita' non identifica un disco: Windows la
+    # da' al primo che arriva, e un filtro "D:\\" ha fatto partire il piano su
+    # un altro hard disk, che quel giorno era D:.
+    patterns = [x for x in filtri_etichetta(plan) if not filtro_per_lettera(x)]
     if patterns:
-        if isinstance(patterns, str):
-            patterns = [patterns]
-        return any(
-            fnmatch.fnmatch(label, str(p)) or fnmatch.fnmatch(str(root), str(p))
-            for p in patterns
-        )
-    # Senza filtro esplicito si lavora solo sui volumi davvero rimovibili:
-    # mai su un disco interno secondario.
-    return removable
+        return any(fnmatch.fnmatch(label, x) for x in patterns)
+    # Senza un disco indicato il piano non parte da nessuna parte: copiare le
+    # cartelle del PC sul primo disco che viene collegato non e' mai cio' che si vuole.
+    return False
+
+
+def filtri_etichetta(plan: dict) -> list[str]:
+    patterns = plan.get("only_volumes") or []
+    if isinstance(patterns, str):
+        patterns = [patterns]
+    return [str(x).strip() for x in patterns if str(x).strip()]
+
+
+def filtro_per_lettera(testo: str) -> bool:
+    """"D:", "D:\\", "/Volumes/x": un percorso, non il nome di un disco."""
+    testo = testo.strip()
+    return (len(testo) >= 2 and testo[1] == ":" and testo[0].isalpha()) or "/" in testo or "\\" in testo
+
+
+def piano_senza_disco(plan: dict) -> bool:
+    """Il piano non dice su quale disco lavorare (o lo dice solo con una lettera)."""
+    if plan.get("only_serials"):
+        return False
+    return not any(not filtro_per_lettera(x) for x in filtri_etichetta(plan))
 
 
 # --------------------------------------------------------------------------
@@ -2008,6 +2026,9 @@ def _handle_volume(root: Path, cfg: dict, removable: bool) -> bool:
         if res:
             results.append(res)
 
+    for numero, plan in enumerate(piani_del_pc(read_pc_plan(cfg)), 1):
+        if piano_senza_disco(plan):
+            log(tf("plan.nodisk", n=numero))
     for plan in piani_per_volume(cfg, root, label, removable):
         pc = machine_name(plan)
         for runner in (run_sync, run_pull, run_push):

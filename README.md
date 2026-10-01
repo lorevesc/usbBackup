@@ -241,7 +241,8 @@ Esempio: [pc-backup.example.json](pc-backup.example.json).
 |---|---|
 | `pc_name` | Nome di questa macchina. Assente = hostname. |
 | `only_serials` | Numeri di serie dei dischi a cui applicare il piano. Se c'e', vale solo questo. |
-| `only_volumes` | Pattern glob su etichetta o lettera. Assente = tutti i dischi rimovibili, mai quelli fissi. |
+| *(nessuno dei due)* | Il piano non parte su nessun disco: va sempre indicato su quali lavorare. |
+| `only_volumes` | Pattern glob sul **nome** (etichetta) del disco. La lettera di unita' (`D:`) non vale: Windows la da' al primo disco che arriva. |
 | `push.folders` | Cartelle del PC, percorsi assoluti (`~` ammessa). |
 | `push.target_subdir` | Cartella radice sul disco. Default `backup`. |
 | `push.use_pc_folder` | `false` per scrivere senza il livello `<nome del PC>`. |

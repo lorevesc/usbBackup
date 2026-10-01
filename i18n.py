@@ -13,6 +13,11 @@ _lingua = "it"
 # interfaccia
 # --------------------------------------------------------------------------
 UI = {
+    'nessun disco': 'no disk',
+    'Indica su quale disco lavora questo piano: legalo al disco selezionato, o scrivi il nome del disco': "Say which disk this plan works on: bind it to the selected disk, or type the disk's name",
+    'Vuoto = il piano non parte: va indicato almeno un disco. Solo il nome, non la lettera (D:).': "Empty = the plan doesn't run: name at least one disk. Name only, not the drive letter (D:).",
+    'Applica solo ai dischi con questo nome (uno per riga, glob)': 'Apply only to disks with this name (one per line, glob)',
+    "La lettera di unita' non identifica un disco: tolta dal filtro ": "A drive letter doesn't identify a disk: removed from the filter ",
     'Piani sovrapposti': 'Overlapping plans',
     "Su questi dischi partono piu' piani insieme: se mandano o prendono le stesse cartelle, si sovrappongono.": 'More than one plan runs on these disks: if they send or fetch the same folders, they overlap.',
     'Piani di questo PC': 'Plans on this PC',
@@ -457,6 +462,10 @@ MESSAGGI = {
                  "{nome}: {copiati} copied, {errori} errors"),
     "notify.title": ("Backup {volume}", "Backup {volume}"),
     "notify.body": ("{n} file ({mb} MB), {errori} errori", "{n} files ({mb} MB), {errori} errors"),
+    "plan.nodisk": ("[attenzione] piano {n} del PC senza un disco indicato: non parte su "
+                    "nessun disco. Legalo a un disco nella scheda Questo PC",
+                    "[warning] PC plan {n} names no disk: it runs on no disk. Bind it to a "
+                    "disk in the This PC tab"),
     "vol.nothing": ("[attenzione] {root}: niente da fare - nessun backup.json sulla "
                     "chiavetta e il piano del PC non si applica",
                     "[warning] {root}: nothing to do - no backup.json on the drive and "
